@@ -71,16 +71,20 @@ const cargarBodega = async () => {
       depositos:   map.depositos   ? JSON.parse(map.depositos)   : null,
       barricas:    map.barricas    ? JSON.parse(map.barricas)    : null,
       operaciones: map.operaciones ? JSON.parse(map.operaciones) : null,
+      cervezas:    map.cervezas    ? JSON.parse(map.cervezas)    : null,
+      materiales:  map.materiales  ? JSON.parse(map.materiales)  : null,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null}; }
 };
 
-const guardarBodega = async (dep,bar,ops) => {
+const guardarBodega = async (dep,bar,ops,cerv,mat) => {
   try {
     await supaFetch("POST","bodega_datos",[
       {bodega_id:BODEGA_ID,clave:"depositos",   valor:JSON.stringify(dep)},
       {bodega_id:BODEGA_ID,clave:"barricas",    valor:JSON.stringify(bar)},
       {bodega_id:BODEGA_ID,clave:"operaciones", valor:JSON.stringify(ops)},
+      {bodega_id:BODEGA_ID,clave:"cervezas",    valor:JSON.stringify(cerv)},
+      {bodega_id:BODEGA_ID,clave:"materiales",  valor:JSON.stringify(mat)},
     ]);
   } catch(e){ console.error(e); }
 };
@@ -178,10 +182,10 @@ const Btn = ({children,onClick,variant="primary",small=false,full=false}) => {
 const TabBar = ({tab,setTab}) => (
   <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,
     background:C.card,borderTop:"1px solid "+C.border,display:"flex",zIndex:20}}>
-    {[{id:"depositos",label:"Depositos"},{id:"barricas",label:"Barricas"},{id:"ops",label:"Operaciones"},{id:"stock",label:"Stock"}].map(t=>(
+    {[{id:"depositos",label:"Depositos"},{id:"barricas",label:"Barricas"},{id:"ops",label:"Operaciones"},{id:"stock",label:"Stock"},{id:"materiales",label:"Materiales"}].map(t=>(
       <button key={t.id} onClick={()=>setTab(t.id)}
-        style={{flex:1,padding:"10px 4px 8px",background:"none",border:"none",cursor:"pointer",
-          color:tab===t.id?C.gold:C.muted,fontFamily:"Georgia,serif",fontSize:11,fontWeight:tab===t.id?700:400}}>
+        style={{flex:1,padding:"10px 2px 8px",background:"none",border:"none",cursor:"pointer",
+          color:tab===t.id?C.gold:C.muted,fontFamily:"Georgia,serif",fontSize:10,fontWeight:tab===t.id?700:400}}>
         {t.label}
       </button>
     ))}
@@ -285,16 +289,36 @@ export default function BodegaApp() {
   const [formOp,       setFormOp]       = useState({});
   const [filtroTipo,   setFiltroTipo]   = useState("todos");
   const [filtroAnada,  setFiltroAnada]  = useState("todas");
+  const [filtroTipoB,  setFiltroTipoB]  = useState("todos");
   const [analisisPDF,  setAnalisisPDF]  = useState(null);  // muestras extraidas del PDF
   const [leyendoPDF,   setLeyendoPDF]   = useState(false);
+  const [cervezas,     setCervezas]     = useState({grape:0, negra:0});
+  const [formCerveza,  setFormCerveza]  = useState(null);
+  const [materiales,   setMateriales]   = useState({
+    botellas: [
+      {id:"bj",  nombre:"Bordelesa Joven",    stock:0, lotes:[]},
+      {id:"bc",  nombre:"Bordelesa Crianza",  stock:0, lotes:[]},
+      {id:"borg",nombre:"Borgona",            stock:0, lotes:[]},
+      {id:"rhin",nombre:"Rhin",               stock:0, lotes:[]},
+    ],
+    corchos: [
+      {id:"cn",  nombre:"Corcho Normal",      stock:0, lotes:[]},
+      {id:"cc",  nombre:"Corcho Crianza",     stock:0, lotes:[]},
+    ],
+    precintas: [], // series: {id, serie, inicio, fin, total, usadas}
+  });
+  const [vistaMat,     setVistaMat]     = useState("lista"); // lista | nueva_entrada | nueva_precinta
+  const [formMat,      setFormMat]      = useState({});
   const pdfRef = useRef(null);
   const saveRef = useRef(null);
 
   useEffect(()=>{
-    cargarBodega().then(({depositos:d,barricas:b,operaciones:o})=>{
+    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat})=>{
       if(d) setDepositos(d);    else setDepositos(DEPOSITOS_DEFAULT);
       if(b) setBarricas(b);     else setBarricas(BARRICAS_DEFAULT);
       if(o) setOperaciones(o);  else setOperaciones(OPS_EJEMPLO);
+      if(cerv) setCervezas(cerv); else setCervezas({grape:0,negra:0});
+      if(mat)  setMateriales(mat);
       setCargando(false);
     });
   },[]);
@@ -304,10 +328,10 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones]);
+  },[depositos,barricas,operaciones,cervezas,materiales]);
 
   const litrosActuales = (id) => {
     let l = 0;
@@ -590,7 +614,9 @@ export default function BodegaApp() {
                 {(op.ph||op.acidez||op.alcohol)&&<div style={{fontSize:11,color:C.muted}}>
                   {op.ph?"pH: "+op.ph:""}  {op.acidez?"Acid: "+op.acidez+" g/L":""} {op.alcohol?"Alc: "+op.alcohol+"%":""} {op.acidezV?"AV: "+op.acidezV:""} {op.so2libre?"SO2L: "+op.so2libre+" mg/L":""} {op.azucares?"Az: "+op.azucares+" g/L":""}
                 </div>}
-                {op.etiqueta&&<div style={{fontSize:12,color:C.gold}}>{op.etiqueta} - {op.botellas} bot.</div>}
+                {op.etiqueta&&<div style={{fontSize:12,color:C.gold}}>
+                  {op.etiqueta}{op.anada?" "+op.anada:""} - {op.botellas} {op.formato==="bib5"?"BiB 5L":op.formato==="bib10"?"BiB 10L":op.formato==="bib15"?"BiB 15L":op.formato==="garrafa"?"Garrafas 20L":op.formato==="otro"?(op.capacidadEnvase+"L"):"bot."}
+                </div>}
                 {op.notas&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic",marginTop:3}}>{op.notas}</div>}
               </div>
             );
@@ -651,6 +677,20 @@ export default function BodegaApp() {
       }
 
       setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
+
+      // Descontar materiales si es embotellado
+      if(f.tipo==="embotellado") {
+        const cant = parseFloat(f.botellas||0);
+        if(cant>0) {
+          setMateriales(prev=>({
+            ...prev,
+            botellas: prev.botellas.map(b=>b.id===f.tipoBottella?{...b,stock:Math.max(0,b.stock-cant)}:b),
+            corchos:  prev.corchos.map(c=>c.id===f.tipoCorcho?{...c,stock:Math.max(0,c.stock-cant)}:c),
+            precintas:prev.precintas.map(p=>p.id===f.seriePrecinta?{...p,usadas:p.usadas+cant}:p),
+          }));
+        }
+      }
+
       setVista(selId?"ficha":"lista");
     };
 
@@ -854,11 +894,49 @@ export default function BodegaApp() {
             <input type="text" style={S.input} placeholder="ej. Araico Tinto 2023" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
             <label style={S.label}>Anada</label>
             <input type="text" style={S.input} placeholder="ej. 2023" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
-            <label style={S.label}>Numero de botellas</label>
+            <label style={S.label}>Formato de envase</label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+              {[["botella","Botella 0,75L"],["bib5","BiB 5L"],["bib10","BiB 10L"],["bib15","BiB 15L"],["garrafa","Garrafa 20L"],["otro","Otro"]].map(([v,l])=>(
+                <button key={v} onClick={()=>set("formato",v)}
+                  style={{padding:"6px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
+                    border:"2px solid "+((f.formato||"botella")===v?C.gold:C.border),
+                    background:(f.formato||"botella")===v?"#1A2535":"transparent",
+                    color:(f.formato||"botella")===v?C.gold:C.muted}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            {f.formato==="otro"&&<>
+              <label style={S.label}>Capacidad del envase (litros)</label>
+              <input type="number" step="0.1" style={S.input} placeholder="ej. 3" value={f.capacidadEnvase||""} onChange={e=>set("capacidadEnvase",e.target.value)}/>
+            </>}
+            <label style={S.label}>Cantidad de envases</label>
             <input type="number" style={S.input} placeholder="0" value={f.botellas||""} onChange={e=>set("botellas",e.target.value)}/>
-            <label style={S.label}>Lote botellas</label>
+            {/* Calculo automatico de litros */}
+            {f.botellas&&(()=>{
+              const caps = {"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20,"otro":parseFloat(f.capacidadEnvase||0)};
+              const cap = caps[f.formato||"botella"];
+              const litrosCalc = cap * parseFloat(f.botellas||0);
+              return litrosCalc>0 ? <div style={{fontSize:12,color:C.accent,marginTop:-4,marginBottom:8}}>= {litrosCalc.toLocaleString("es-ES")} L totales</div> : null;
+            })()}
+            <label style={S.label}>Tipo de botella</label>
+            <select style={S.input} value={f.tipoBottella||""} onChange={e=>set("tipoBottella",e.target.value)}>
+              <option value="">-- Selecciona tipo --</option>
+              {materiales.botellas.map(b=><option key={b.id} value={b.id}>{b.nombre} (stock: {fmt(b.stock)})</option>)}
+            </select>
+            <label style={S.label}>Tipo de corcho</label>
+            <select style={S.input} value={f.tipoCorcho||""} onChange={e=>set("tipoCorcho",e.target.value)}>
+              <option value="">-- Selecciona tipo --</option>
+              {materiales.corchos.map(c=><option key={c.id} value={c.id}>{c.nombre} (stock: {fmt(c.stock)})</option>)}
+            </select>
+            <label style={S.label}>Serie de precintas</label>
+            <select style={S.input} value={f.seriePrecinta||""} onChange={e=>set("seriePrecinta",e.target.value)}>
+              <option value="">-- Selecciona serie --</option>
+              {materiales.precintas.filter(p=>p.total-p.usadas>0).map(p=><option key={p.id} value={p.id}>{p.serie} ({fmt(p.total-p.usadas)} restantes)</option>)}
+            </select>
+            <label style={S.label}>Lote envases</label>
             <input type="text" style={S.input} placeholder="ej. L2025-001" value={f.loteBotellas||""} onChange={e=>set("loteBotellas",e.target.value)}/>
-            <label style={S.label}>Lote corchos</label>
+            <label style={S.label}>Lote corchos / tapones</label>
             <input type="text" style={S.input} placeholder="ej. C2025-001" value={f.loteCorchos||""} onChange={e=>set("loteCorchos",e.target.value)}/>
             <label style={S.label}>Lote etiquetas</label>
             <input type="text" style={S.input} placeholder="ej. E2025-001" value={f.loteEtiqueta||""} onChange={e=>set("loteEtiqueta",e.target.value)}/>
@@ -1009,8 +1087,6 @@ export default function BodegaApp() {
     const litrosTotBarricas = barricas.filter(b=>b.activo&&b.tipoVino).reduce((s,b)=>s+225,0);
     const totalTintoB  = barricas.filter(b=>b.activo&&b.tipoVino==="tinto"). length * 225;
     const totalBlancoB = barricas.filter(b=>b.activo&&b.tipoVino==="blanco").length * 225;
-
-    const [filtroTipoB, setFiltroTipoB] = useState("todos");
 
     const TarjetaBarrica = ({b}) => {
       const col = (b.tipoVino && COLOR_TIPO[b.tipoVino]) ? COLOR_TIPO[b.tipoVino] : COLOR_TIPO.vacio;
@@ -1275,7 +1351,213 @@ export default function BodegaApp() {
               </div>
             ))}
           </>}
+
+          {/* Cervezas */}
+          <div style={S.sec}>Cervezas</div>
+          {[["grape","Cerveza Grape","#E8A020"],["negra","Cerveza Negra","#3A2A1A"]].map(([tipo,nombre,color])=>(
+            <div key={tipo} style={{...S.card,borderLeft:"3px solid "+color,marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:color}}>{nombre}</div>
+                  <div style={{fontSize:11,color:C.muted}}>Latas 33cl - Cajas de 12</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:26,fontWeight:700,color:color}}>{cervezas[tipo]}</div>
+                  <div style={{fontSize:11,color:C.muted}}>latas</div>
+                  <div style={{fontSize:11,color:C.muted}}>{Math.floor(cervezas[tipo]/12)} cajas + {cervezas[tipo]%12} sueltas</div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <Btn variant="ghost" small onClick={()=>setFormCerveza({tipo,nombre,accion:"entrada",unidad:"caja",cantidad:""})}>+ Entrada</Btn>
+                <Btn variant="ghost" small onClick={()=>setFormCerveza({tipo,nombre,accion:"salida",unidad:"lata",cantidad:""})}>- Salida</Btn>
+              </div>
+            </div>
+          ))}
+
+          {/* Modal entrada/salida cerveza */}
+          {formCerveza&&(
+            <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div style={{...S.card,width:"100%",maxWidth:360}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.gold,marginBottom:12}}>
+                  {formCerveza.accion==="entrada"?"Entrada":"Salida"} - {formCerveza.nombre}
+                </div>
+                <label style={S.label}>Unidad</label>
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  {[["caja","Caja (12 latas)"],["lata","Lata suelta"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setFormCerveza(p=>({...p,unidad:v}))}
+                      style={{flex:1,padding:"8px",borderRadius:8,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
+                        border:"2px solid "+(formCerveza.unidad===v?C.gold:C.border),
+                        background:formCerveza.unidad===v?"#1A2535":"transparent",
+                        color:formCerveza.unidad===v?C.gold:C.muted}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <label style={S.label}>Cantidad</label>
+                <input type="number" style={S.input} placeholder="0" value={formCerveza.cantidad}
+                  onChange={e=>setFormCerveza(p=>({...p,cantidad:e.target.value}))}/>
+                {formCerveza.cantidad&&<div style={{fontSize:12,color:C.accent,marginTop:-4,marginBottom:8}}>
+                  = {formCerveza.unidad==="caja" ? parseFloat(formCerveza.cantidad)*12 : parseFloat(formCerveza.cantidad)} latas
+                </div>}
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <Btn variant="ghost" onClick={()=>setFormCerveza(null)} full>Cancelar</Btn>
+                  <Btn variant="gold" onClick={()=>{
+                    const latas = formCerveza.unidad==="caja" ? parseFloat(formCerveza.cantidad||0)*12 : parseFloat(formCerveza.cantidad||0);
+                    if(!latas) return;
+                    setCervezas(prev=>({...prev,
+                      [formCerveza.tipo]: Math.max(0, prev[formCerveza.tipo] + (formCerveza.accion==="entrada"?latas:-latas))
+                    }));
+                    setFormCerveza(null);
+                  }} full>Confirmar</Btn>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
+        <TabBar tab={tab} setTab={setTab}/>
+      </div>
+    );
+  }
+
+  // ── TAB MATERIALES ────────────────────────────────────────────────────────
+  if(tab==="materiales") {
+    const SeccionMaterial = ({titulo, items, categoria}) => (
+      <>
+        <div style={S.sec}>{titulo}</div>
+        {items.map(item=>(
+          <div key={item.id} style={{...S.card,marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.gold}}>{item.nombre}</div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:22,fontWeight:700,color:item.stock>0?C.accent:C.muted}}>{fmt(item.stock)}</div>
+                <div style={{fontSize:10,color:C.muted}}>unidades</div>
+              </div>
+            </div>
+            {item.lotes.length>0&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>
+              Lotes: {item.lotes.map(l=>l.ref).join(", ")}
+            </div>}
+            <Btn variant="ghost" small onClick={()=>setFormMat({categoria,id:item.id,nombre:item.nombre,tipo:"entrada",cantidad:"",ref:""})}>
+              + Entrada
+            </Btn>
+          </div>
+        ))}
+      </>
+    );
+
+    return (
+      <div style={{...S.app,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
+        <div style={S.header}>
+          <div><div style={S.htitle}>Materiales</div><div style={S.hsub}>Botellas, corchos y precintas</div></div>
+          <Btn variant="gold" small onClick={()=>setFormMat({categoria:"precintas",tipo:"nueva_serie",serie:"",inicio:"",fin:""})}>+ Precinta</Btn>
+        </div>
+        <div style={{...S.body,flex:1}}>
+
+          <SeccionMaterial titulo="Botellas" items={materiales.botellas} categoria="botellas"/>
+          <SeccionMaterial titulo="Corchos"  items={materiales.corchos}  categoria="corchos"/>
+
+          {/* Precintas */}
+          <div style={S.sec}>Precintas</div>
+          {materiales.precintas.length===0
+            ? <div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"20px"}}>Sin series de precintas registradas</div>
+            : materiales.precintas.map(p=>{
+              const restantes = p.total - p.usadas;
+              const pct = Math.round((p.usadas/p.total)*100);
+              return (
+                <div key={p.id} style={{...S.card,marginBottom:8,borderLeft:"3px solid "+(restantes>0?C.gold:C.muted)}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{p.serie}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{fmt(p.inicio)} - {fmt(p.fin)}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:18,fontWeight:700,color:restantes>0?C.accent:C.muted}}>{fmt(restantes)}</div>
+                      <div style={{fontSize:10,color:C.muted}}>restantes de {fmt(p.total)}</div>
+                    </div>
+                  </div>
+                  <div style={{height:4,background:C.border,borderRadius:2,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:pct+"%",background:C.gold,borderRadius:2}}/>
+                  </div>
+                  <div style={{fontSize:10,color:C.muted,marginTop:3}}>{pct}% usado</div>
+                </div>
+              );
+            })
+          }
+        </div>
+
+        {/* Modal entrada material o nueva serie precinta */}
+        {formMat&&formMat.tipo==="entrada"&&(
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{...S.card,width:"100%",maxWidth:360}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.gold,marginBottom:12}}>Entrada - {formMat.nombre}</div>
+              <label style={S.label}>Referencia / Lote</label>
+              <input type="text" style={S.input} placeholder="ej. LB-2025-001" value={formMat.ref||""}
+                onChange={e=>setFormMat(p=>({...p,ref:e.target.value}))}/>
+              <label style={S.label}>Cantidad</label>
+              <input type="number" style={S.input} placeholder="0" value={formMat.cantidad||""}
+                onChange={e=>setFormMat(p=>({...p,cantidad:e.target.value}))}/>
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <Btn variant="ghost" onClick={()=>setFormMat(null)} full>Cancelar</Btn>
+                <Btn variant="gold" onClick={()=>{
+                  const cant = parseFloat(formMat.cantidad||0);
+                  if(!cant) return;
+                  setMateriales(prev=>({...prev,
+                    [formMat.categoria]: prev[formMat.categoria].map(item=>
+                      item.id===formMat.id ? {
+                        ...item,
+                        stock: item.stock + cant,
+                        lotes: formMat.ref ? [...item.lotes, {ref:formMat.ref, cantidad:cant, fecha:hoy()}] : item.lotes
+                      } : item
+                    )
+                  }));
+                  setFormMat(null);
+                }} full>Confirmar</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal nueva serie de precintas */}
+        {formMat&&formMat.tipo==="nueva_serie"&&(
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{...S.card,width:"100%",maxWidth:360}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.gold,marginBottom:12}}>Nueva serie de precintas</div>
+              <label style={S.label}>Nombre de serie</label>
+              <input type="text" style={S.input} placeholder="ej. AS" value={formMat.serie||""}
+                onChange={e=>setFormMat(p=>({...p,serie:e.target.value}))}/>
+              <div style={{display:"flex",gap:8}}>
+                <div style={{flex:1}}>
+                  <label style={S.label}>Numero inicio</label>
+                  <input type="number" style={S.input} placeholder="ej. 900001" value={formMat.inicio||""}
+                    onChange={e=>setFormMat(p=>({...p,inicio:e.target.value}))}/>
+                </div>
+                <div style={{flex:1}}>
+                  <label style={S.label}>Numero fin</label>
+                  <input type="number" style={S.input} placeholder="ej. 910000" value={formMat.fin||""}
+                    onChange={e=>setFormMat(p=>({...p,fin:e.target.value}))}/>
+                </div>
+              </div>
+              {formMat.inicio&&formMat.fin&&<div style={{fontSize:12,color:C.accent,marginBottom:8}}>
+                Total: {fmt(parseFloat(formMat.fin)-parseFloat(formMat.inicio)+1)} precintas
+              </div>}
+              <div style={{display:"flex",gap:8,marginTop:4}}>
+                <Btn variant="ghost" onClick={()=>setFormMat(null)} full>Cancelar</Btn>
+                <Btn variant="gold" onClick={()=>{
+                  const inicio = parseFloat(formMat.inicio||0);
+                  const fin    = parseFloat(formMat.fin||0);
+                  if(!formMat.serie||!inicio||!fin||fin<=inicio) return;
+                  setMateriales(prev=>({...prev,
+                    precintas:[...prev.precintas,{
+                      id:Date.now(), serie:formMat.serie,
+                      inicio, fin, total:fin-inicio+1, usadas:0, fecha:hoy()
+                    }]
+                  }));
+                  setFormMat(null);
+                }} full>Guardar</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
         <TabBar tab={tab} setTab={setTab}/>
       </div>
     );
