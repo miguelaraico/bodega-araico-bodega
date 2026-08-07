@@ -73,11 +73,38 @@ const cargarBodega = async () => {
       operaciones: map.operaciones ? JSON.parse(map.operaciones) : null,
       cervezas:    map.cervezas    ? JSON.parse(map.cervezas)    : null,
       materiales:  map.materiales  ? JSON.parse(map.materiales)  : null,
+      stock:       map.stock       ? JSON.parse(map.stock)       : null,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null}; }
 };
 
-const guardarBodega = async (dep,bar,ops,cerv,mat) => {
+// Cargar ventas de la app de ventas para descontar del stock
+const cargarVentas = async () => {
+  try {
+    const rows = await supaFetch("GET","bodega_datos?bodega_id=eq.araico&clave=eq.clientes&select=valor");
+    if(!rows||rows.length===0) return [];
+    const clientes = JSON.parse(rows[0].valor);
+    return clientes.flatMap(c=>
+      (c.ventas||[]).map(v=>({...v, clienteNombre:c.nombre}))
+    );
+  } catch(e){ console.error(e); return []; }
+};
+
+// Mapeo producto ventas -> etiqueta almacen bodega
+const MAPA_PRODUCTOS = {
+  "araico_tinto":   "Araico Tinto",
+  "araico_blanco":  "Araico Blanco",
+  "araico_crianza": "Araico Crianza",
+  "sin":            "Sin",
+  "orgullo":        "Orgullo",
+  "cuartillo":      "Cuartillo",
+  "reserva":        "Reserva",
+  "bib_5l":         "BiB 5L",
+  "bib_10l":        "BiB 10L",
+  "bib_15l":        "BiB 15L",
+};
+
+const guardarBodega = async (dep,bar,ops,cerv,mat,stk) => {
   try {
     await supaFetch("POST","bodega_datos",[
       {bodega_id:BODEGA_ID,clave:"depositos",   valor:JSON.stringify(dep)},
@@ -85,6 +112,7 @@ const guardarBodega = async (dep,bar,ops,cerv,mat) => {
       {bodega_id:BODEGA_ID,clave:"operaciones", valor:JSON.stringify(ops)},
       {bodega_id:BODEGA_ID,clave:"cervezas",    valor:JSON.stringify(cerv)},
       {bodega_id:BODEGA_ID,clave:"materiales",  valor:JSON.stringify(mat)},
+      {bodega_id:BODEGA_ID,clave:"stock",       valor:JSON.stringify(stk)},
     ]);
   } catch(e){ console.error(e); }
 };
@@ -298,6 +326,8 @@ export default function BodegaApp() {
   const [leyendoPDF,   setLeyendoPDF]   = useState(false);
   const [cervezas,     setCervezas]     = useState({grape:0, negra:0});
   const [formCerveza,  setFormCerveza]  = useState(null);
+  const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
+  const [ventas,       setVentas]       = useState([]);
   const [materiales,   setMateriales]   = useState({
     botellas: [
       {id:"bj",  nombre:"Bordelesa Joven",    stock:0, lotes:[]},
@@ -317,14 +347,17 @@ export default function BodegaApp() {
   const saveRef = useRef(null);
 
   useEffect(()=>{
-    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat})=>{
-      if(d) setDepositos(d);    else setDepositos(DEPOSITOS_DEFAULT);
-      if(b) setBarricas(b);     else setBarricas(BARRICAS_DEFAULT);
-      if(o) setOperaciones(o);  else setOperaciones(OPS_EJEMPLO);
-      if(cerv) setCervezas(cerv); else setCervezas({grape:0,negra:0});
+    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk})=>{
+      if(d)    setDepositos(d);         else setDepositos(DEPOSITOS_DEFAULT);
+      if(b)    setBarricas(b);          else setBarricas(BARRICAS_DEFAULT);
+      if(o)    setOperaciones(o);       else setOperaciones([]);
+      if(cerv) setCervezas(cerv);       else setCervezas({grape:0,negra:0});
       if(mat)  setMateriales(mat);
+      if(stk)  setStockInicial(stk);
       setCargando(false);
     });
+    // Cargar ventas de la app principal
+    cargarVentas().then(v=>setVentas(v));
   },[]);
 
   useEffect(()=>{
@@ -332,13 +365,14 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones,cervezas,materiales]);
+  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial]);
 
   const litrosActuales = (id) => {
-    let l = 0;
+    const contenedor = [...depositos,...barricas].find(d=>d.id===id);
+    let l = parseFloat(contenedor?.litrosIniciales||0);
     operaciones.filter(o=>o.depId===id||o.depDestino===id)
       .sort((a,b)=>a.fecha.localeCompare(b.fecha))
       .forEach(op=>{
@@ -1204,41 +1238,67 @@ export default function BodegaApp() {
 
   // ── TAB STOCK ─────────────────────────────────────────────────────────────
   if(tab==="stock") {
-    // Botellero: embotellados con destino="botellero"
-    // Almacen: embotellados con destino="almacen" + los que se etiquetaron desde botellero
-    const botellero = {};
+    // Partir de las existencias iniciales
     const almacen   = {};
+    const botellero = {};
 
+    // Cargar existencias iniciales
+    (stockInicial.almacen||[]).forEach(item=>{
+      const k = (item.etiqueta||"")+" "+(item.anada||"");
+      almacen[k] = {botellas:item.botellas, etiqueta:item.etiqueta, anada:item.anada||"", lotes:item.lotes||[]};
+    });
+    (stockInicial.botellero||[]).forEach(item=>{
+      const k = (item.etiqueta||"")+" "+(item.anada||"");
+      botellero[k] = {botellas:item.botellas, etiqueta:item.etiqueta, anada:item.anada||"", lotes:item.lotes||[]};
+    });
+
+    // Aplicar operaciones posteriores
     operaciones.filter(o=>o.tipo==="embotellado"||o.tipo==="entrada_granel").forEach(op=>{
       const k = (op.etiqueta||"Sin etiquetar")+" "+(op.anada||"");
-      const dest = op.destino||"almacen";
-      const esBotellero = op.tipo==="entrada_granel" ? dest==="botellero" : dest==="botellero";
+      const esBotellero = (op.destino||"almacen")==="botellero";
       if(esBotellero){
-        if(!botellero[k]) botellero[k]={botellas:0,etiqueta:op.etiqueta||"Sin etiquetar",anada:op.anada||"",lotes:[],ops:[]};
+        if(!botellero[k]) botellero[k]={botellas:0,etiqueta:op.etiqueta||"Sin etiquetar",anada:op.anada||"",lotes:[]};
         botellero[k].botellas += parseFloat(op.botellas||0);
         if(op.loteBotellas) botellero[k].lotes.push(op.loteBotellas);
-        botellero[k].ops.push(op.id);
       } else {
-        if(!almacen[k]) almacen[k]={botellas:0,etiqueta:op.etiqueta||"Sin etiquetar",anada:op.anada||"",lotes:[],ops:[]};
+        if(!almacen[k]) almacen[k]={botellas:0,etiqueta:op.etiqueta||"Sin etiquetar",anada:op.anada||"",lotes:[]};
         almacen[k].botellas += parseFloat(op.botellas||0);
         if(op.loteBotellas) almacen[k].lotes.push(op.loteBotellas);
-        almacen[k].ops.push(op.id);
       }
     });
 
     // Etiquetados desde botellero pasan a almacen
     operaciones.filter(o=>o.tipo==="etiquetado").forEach(op=>{
-      const k = (op.etiqueta||"Sin etiquetar")+" "+(op.anada||"");
-      const kOrig = (op.etiquetaOrig||op.etiqueta||"Sin etiquetar")+" "+(op.anada||"");
-      // Resta del botellero
+      const k    = (op.etiqueta||"")+" "+(op.anada||"");
+      const kOrig= (op.etiquetaOrig||op.etiqueta||"")+" "+(op.anada||"");
       if(botellero[kOrig]) botellero[kOrig].botellas -= parseFloat(op.botellas||0);
-      // Suma al almacen
-      if(!almacen[k]) almacen[k]={botellas:0,etiqueta:op.etiqueta||"",anada:op.anada||"",lotes:[],ops:[]};
+      if(!almacen[k]) almacen[k]={botellas:0,etiqueta:op.etiqueta||"",anada:op.anada||"",lotes:[]};
       almacen[k].botellas += parseFloat(op.botellas||0);
     });
 
-    const totalBotellero = Object.values(botellero).reduce((s,v)=>s+v.botellas,0);
-    const totalAlmacen   = Object.values(almacen).reduce((s,v)=>s+v.botellas,0);
+    // Descontar ventas de la app de ventas (solo desde 01/08/2026)
+    ventas.forEach(v=>{
+      (v.lineas||[]).forEach(l=>{
+        const etiqueta = MAPA_PRODUCTOS[l.productoId];
+        if(!etiqueta) return;
+        const k = etiqueta+" ";
+        // Buscar en almacen
+        const keys = Object.keys(almacen);
+        const match = keys.find(k2=>k2.startsWith(etiqueta));
+        if(match) {
+          almacen[match].botellas -= parseFloat(l.botellas||l.cantUnidades||0);
+        }
+      });
+    });
+
+    // Asegurar que Sin aparece aunque sea a 0
+    if(!Object.keys(almacen).find(k=>k.startsWith("Sin"))) {
+      almacen["Sin "] = {botellas:0, etiqueta:"Sin", anada:"", lotes:[]};
+    }
+
+    const totalBotellero = Object.values(botellero).reduce((s,v)=>s+Math.max(0,v.botellas),0);
+    const totalAlmacen   = Object.values(almacen).reduce((s,v)=>s+Math.max(0,v.botellas),0);
+    const sinStock       = Object.values(almacen).filter(v=>v.botellas<=0);
     const graneles = operaciones.filter(o=>o.tipo==="salida_granel");
 
     const abrirEtiquetado = (k, datos) => {
@@ -1293,20 +1353,31 @@ export default function BodegaApp() {
           }
 
           {/* Almacen */}
+          {/* Aviso stock agotado */}
+          {sinStock.length>0&&(
+            <div style={{...S.card,background:"rgba(204,51,51,0.15)",borderColor:C.danger,marginBottom:10}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.danger,marginBottom:4}}>Sin stock:</div>
+              {sinStock.map(p=>(
+                <div key={p.etiqueta} style={{fontSize:12,color:C.danger}}>{p.etiqueta}{p.anada?" "+p.anada:""}{p.botellas<0?" ("+Math.abs(Math.round(p.botellas))+" en negativo)":""}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Almacen */}
           <div style={S.sec}>Almacen (disponibles para venta)</div>
           {Object.keys(almacen).filter(k=>almacen[k].botellas>0).length===0
             ? <div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"20px"}}>Almacen vacio</div>
-            : Object.entries(almacen).filter(([,d])=>d.botellas>0).sort((a,b)=>b[1].botellas-a[1].botellas).map(([k,d])=>(
-              <div key={k} style={{...S.card,borderLeft:"3px solid "+C.accent,marginBottom:8}}>
+            : Object.entries(almacen).sort((a,b)=>b[1].botellas-a[1].botellas).map(([k,d])=>(
+              <div key={k} style={{...S.card,borderLeft:"3px solid "+(d.botellas<=0?C.danger:C.accent),marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
-                    <div style={{fontSize:14,fontWeight:700,color:C.accent}}>{d.etiqueta}</div>
+                    <div style={{fontSize:14,fontWeight:700,color:d.botellas<=0?C.danger:C.accent}}>{d.etiqueta}</div>
                     {d.anada&&<div style={{fontSize:12,color:C.muted}}>Anada {d.anada}</div>}
                     {d.lotes.length>0&&<div style={{fontSize:11,color:C.muted}}>Lote: {d.lotes.join(", ")}</div>}
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:22,fontWeight:700,color:C.accent}}>{fmt(d.botellas)}</div>
-                    <div style={{fontSize:11,color:C.muted}}>botellas</div>
+                    <div style={{fontSize:22,fontWeight:700,color:d.botellas<=0?C.danger:C.accent}}>{Math.round(d.botellas)}</div>
+                    <div style={{fontSize:11,color:C.muted}}>unidades</div>
                   </div>
                 </div>
               </div>
