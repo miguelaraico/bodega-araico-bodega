@@ -123,10 +123,14 @@ const DEPOSITOS_DEFAULT = [
 ];
 
 const BARRICAS_DEFAULT = [
-  ...Array.from({length:9},  (_,i)=>({id:"BF"+(i+1).toString().padStart(2,"0"), nombre:"BF"+(i+1).toString().padStart(2,"0"), tipo:"frances",  capacidad:225, activo:true,
-    tipoVino: i<6?"tinto":i<8?"blanco":"", anada: i<6?"2023":i<8?"2024":"", etiqueta: i<3?"Autor":i<6?"Reserva":i<8?"Blanco Barrica":""})),
-  ...Array.from({length:44}, (_,i)=>({id:"BA"+(i+1).toString().padStart(2,"0"), nombre:"BA"+(i+1).toString().padStart(2,"0"), tipo:"americano",capacidad:225, activo:true,
-    tipoVino: i<30?"tinto":i<36?"tinto":i<40?"blanco":"", anada: i<20?"2023":i<30?"2024":i<36?"2022":i<40?"2024":"", etiqueta: i<10?"Autor":i<20?"Crianza":i<30?"Reserva":i<36?"Gran Reserva":i<40?"Blanco Barrica":""})),
+  // Francesas (8) - BF01 a BF08
+  ...Array.from({length:4}, (_,i)=>({id:"BF"+(i+1).toString().padStart(2,"0"), nombre:"BF"+(i+1).toString().padStart(2,"0"), tipo:"frances", capacidad:225, activo:true, tipoVino:"tinto",  anada:"2025", etiqueta:"Tinto 2025"})),
+  ...Array.from({length:4}, (_,i)=>({id:"BF"+(i+5).toString().padStart(2,"0"), nombre:"BF"+(i+5).toString().padStart(2,"0"), tipo:"frances", capacidad:225, activo:true, tipoVino:"tinto",  anada:"2023", etiqueta:"Orgullo"})),
+  // Americanas (49) - BA01 a BA49
+  ...Array.from({length:29},(_,i)=>({id:"BA"+(i+1).toString().padStart(2,"0"),  nombre:"BA"+(i+1).toString().padStart(2,"0"),  tipo:"americano",capacidad:225, activo:true, tipoVino:"tinto",  anada:"2025", etiqueta:"Tinto 2025"})),
+  ...Array.from({length:12},(_,i)=>({id:"BA"+(i+30).toString().padStart(2,"0"), nombre:"BA"+(i+30).toString().padStart(2,"0"), tipo:"americano",capacidad:225, activo:true, tipoVino:"tinto",  anada:"2024", etiqueta:"Tinto 2024"})),
+  {id:"BA42", nombre:"BA42", tipo:"americano", capacidad:225, activo:true, tipoVino:"tinto",  anada:"2023", etiqueta:"Orgullo"},
+  ...Array.from({length:7}, (_,i)=>({id:"BA"+(i+43).toString().padStart(2,"0"), nombre:"BA"+(i+43).toString().padStart(2,"0"), tipo:"americano",capacidad:225, activo:true, tipoVino:"blanco", anada:"2024", etiqueta:"Blanco 2024"})),
 ];
 
 const TIPOS_OP = [
@@ -1080,105 +1084,77 @@ export default function BodegaApp() {
 
   // ── TAB BARRICAS ──────────────────────────────────────────────────────────
   if(tab==="barricas") {
-    const franc = barricas.filter(b=>b.tipo==="frances"&&b.activo);
-    const amer  = barricas.filter(b=>b.tipo==="americano"&&b.activo);
+    const barricasActivas = barricas.filter(b=>b.activo);
+    const totalLitros = barricasActivas.length * 225;
+    const franc = barricasActivas.filter(b=>b.tipo==="frances").length;
+    const amer  = barricasActivas.filter(b=>b.tipo==="americano").length;
 
-    // Totales por tipo de vino en barricas
-    const litrosTotBarricas = barricas.filter(b=>b.activo&&b.tipoVino).reduce((s,b)=>s+225,0);
-    const totalTintoB  = barricas.filter(b=>b.activo&&b.tipoVino==="tinto"). length * 225;
-    const totalBlancoB = barricas.filter(b=>b.activo&&b.tipoVino==="blanco").length * 225;
-
-    const TarjetaBarrica = ({b}) => {
-      const col = (b.tipoVino && COLOR_TIPO[b.tipoVino]) ? COLOR_TIPO[b.tipoVino] : COLOR_TIPO.vacio;
-      const tieneVino = !!b.tipoVino;
-      const resaltado = filtroTipoB==="todos" || (b.tipoVino||"")===filtroTipoB;
-      return (
-        <div onClick={()=>{setSelId(b.id);setVista("ficha");}}
-          style={{padding:"8px 6px",borderRadius:8,cursor:"pointer",textAlign:"center",width:58,
-            border:"2px solid "+(tieneVino?col.borde:C.border),
-            background:tieneVino?"rgba("+hexToRgb(col.liq)+",0.2)":"transparent",
-            opacity:resaltado?1:0.25, transition:"opacity 0.2s"}}>
-          <div style={{fontSize:11,fontWeight:700,color:tieneVino?col.texto:C.muted}}>{b.nombre}</div>
-          {b.anada&&<div style={{fontSize:8,color:C.muted}}>{b.anada}</div>}
-          {b.etiqueta&&<div style={{fontSize:8,color:col.texto,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:54}}>{b.etiqueta}</div>}
-        </div>
-      );
-    };
+    // Agrupar por lote de vino
+    const lotes = {};
+    barricasActivas.forEach(b=>{
+      const key = (b.etiqueta||"Sin asignar")+"__"+(b.anada||"");
+      if(!lotes[key]) lotes[key]={etiqueta:b.etiqueta||"Sin asignar",anada:b.anada||"",tipoVino:b.tipoVino||"",frances:0,americano:0,total:0};
+      lotes[key][b.tipo]++;
+      lotes[key].total++;
+    });
 
     return (
       <div style={{...S.app,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
         <div style={S.header}>
-          <div><div style={S.htitle}>Barricas</div><div style={S.hsub}>{barricas.filter(b=>b.activo).length} barricas - 225 L c/u</div></div>
+          <div><div style={S.htitle}>Barricas</div><div style={S.hsub}>{barricasActivas.length} barricas - {fmtL(totalLitros)}</div></div>
           <Btn variant="gold" small onClick={()=>{setFormOp({fecha:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>+ Op.</Btn>
         </div>
         <div style={{...S.body,flex:1}}>
 
           {/* Resumen */}
-          <div style={{...S.card,background:"#0A1520",borderColor:C.gold,marginBottom:10}}>
+          <div style={{...S.card,background:"#0A1520",borderColor:C.gold,marginBottom:12}}>
             <div style={{display:"flex",gap:10}}>
               <div style={{flex:1,textAlign:"center"}}>
-                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase"}}>Frances</div>
-                <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{franc.length}</div>
-                <div style={{fontSize:11,color:C.muted}}>{fmtL(franc.length*225)}</div>
+                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase"}}>Francesas</div>
+                <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{franc}</div>
+                <div style={{fontSize:11,color:C.muted}}>{fmtL(franc*225)}</div>
               </div>
               <div style={{flex:1,textAlign:"center"}}>
-                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase"}}>Americano</div>
-                <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{amer.length}</div>
-                <div style={{fontSize:11,color:C.muted}}>{fmtL(amer.length*225)}</div>
+                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase"}}>Americanas</div>
+                <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{amer}</div>
+                <div style={{fontSize:11,color:C.muted}}>{fmtL(amer*225)}</div>
               </div>
               <div style={{flex:1,textAlign:"center"}}>
                 <div style={{fontSize:10,color:C.muted,textTransform:"uppercase"}}>Total</div>
-                <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{fmtL((franc.length+amer.length)*225)}</div>
+                <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{barricasActivas.length}</div>
+                <div style={{fontSize:11,color:C.muted}}>{fmtL(totalLitros)}</div>
               </div>
             </div>
-            {(totalTintoB>0||totalBlancoB>0)&&<div style={{display:"flex",gap:8,marginTop:10}}>
-              {totalTintoB>0&&<div style={{flex:1,background:"rgba(139,26,42,0.3)",border:"1px solid #C23050",borderRadius:8,padding:"5px 8px",textAlign:"center"}}>
-                <div style={{fontSize:9,color:"#F0A0B0",textTransform:"uppercase"}}>Tinto</div>
-                <div style={{fontSize:13,fontWeight:700,color:"#F0A0B0"}}>{fmtL(totalTintoB)}</div>
-              </div>}
-              {totalBlancoB>0&&<div style={{flex:1,background:"rgba(160,128,32,0.3)",border:"1px solid #D4B840",borderRadius:8,padding:"5px 8px",textAlign:"center"}}>
-                <div style={{fontSize:9,color:"#F0DCA0",textTransform:"uppercase"}}>Blanco</div>
-                <div style={{fontSize:13,fontWeight:700,color:"#F0DCA0"}}>{fmtL(totalBlancoB)}</div>
-              </div>}
-            </div>}
           </div>
 
-          {/* Filtro tipo */}
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-            {["todos","tinto","blanco","rosado"].map(t=>(
-              <button key={t} onClick={()=>setFiltroTipoB(t)}
-                style={{padding:"4px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
-                  border:"2px solid "+(filtroTipoB===t?COLOR_TIPO[t]?.borde||C.gold:C.border),
-                  background:filtroTipoB===t?"#1A2535":"transparent",
-                  color:filtroTipoB===t?COLOR_TIPO[t]?.texto||C.gold:C.muted}}>
-                {t==="todos"?"Todas":t.charAt(0).toUpperCase()+t.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {/* Barricas francesas */}
-          <div style={S.sec}>Roble Frances ({franc.length})</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:16}}>
-            {franc.map(b=><TarjetaBarrica key={b.id} b={b}/>)}
-          </div>
-
-          {/* Barricas americanas */}
-          <div style={S.sec}>Roble Americano ({amer.length})</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-            {amer.map(b=><TarjetaBarrica key={b.id} b={b}/>)}
-          </div>
-
-          {/* Leyenda */}
-          <div style={{display:"flex",gap:12,marginTop:14,fontSize:10,color:C.muted,justifyContent:"center",flexWrap:"wrap"}}>
-            {[["tinto","Tinto"],["blanco","Blanco"],["rosado","Rosado"]].map(([k,l])=>(
-              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                <div style={{width:10,height:10,borderRadius:2,background:COLOR_TIPO[k].liq,border:"1px solid "+COLOR_TIPO[k].borde}}/>{l}
+          {/* Lotes de vino */}
+          <div style={S.sec}>Por lote de vino</div>
+          {Object.entries(lotes).sort((a,b)=>b[1].total-a[1].total).map(([key,d])=>{
+            const col = (d.tipoVino&&COLOR_TIPO[d.tipoVino])?COLOR_TIPO[d.tipoVino]:COLOR_TIPO.vacio;
+            return (
+              <div key={key} style={{...S.card,borderLeft:"4px solid "+col.borde,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:700,color:col.texto}}>{d.etiqueta}</div>
+                    {d.anada&&<div style={{fontSize:12,color:C.muted}}>Anada {d.anada}</div>}
+                    <div style={{fontSize:11,color:C.muted,marginTop:2}}>{fmtL(d.total*225)}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:28,fontWeight:700,color:col.texto}}>{d.total}</div>
+                    <div style={{fontSize:10,color:C.muted}}>barricas</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  {d.frances>0&&<div style={{background:"rgba(200,169,110,0.15)",border:"1px solid "+C.gold,borderRadius:8,padding:"4px 10px",fontSize:11,color:C.gold}}>
+                    {d.frances} francesa{d.frances>1?"s":""}
+                  </div>}
+                  {d.americano>0&&<div style={{background:"rgba(255,255,255,0.05)",border:"1px solid "+C.border,borderRadius:8,padding:"4px 10px",fontSize:11,color:C.muted}}>
+                    {d.americano} americana{d.americano>1?"s":""}
+                  </div>}
+                </div>
               </div>
-            ))}
-            <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <div style={{width:10,height:10,borderRadius:2,background:C.border}}/> Sin asignar
-            </div>
-          </div>
+            );
+          })}
         </div>
         <TabBar tab={tab} setTab={setTab}/>
       </div>
