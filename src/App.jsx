@@ -811,9 +811,10 @@ export default function BodegaApp() {
               etiqueta: depOrigen.etiqueta||d.etiqueta,
             }:d));
           }
-          // Copiar historial del origen al destino (operaciones anteriores al trasiego)
+          // Copiar solo analisis y tratamientos del origen al destino (no llenados ni trasiegos que afectan litros)
+          const tiposACopiar = ["analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","otro"];
           const opsOrigen = operaciones
-            .filter(o=>o.depId===f.depId && o.fecha<=f.fecha)
+            .filter(o=>o.depId===f.depId && o.fecha<=f.fecha && tiposACopiar.includes(o.tipo))
             .map(o=>({...o, id:Date.now()+Math.random(), depId:depId,
               notas:(o.notas?o.notas+" | ":"")+"[Heredado de "+f.depId+"]"}));
           if(opsOrigen.length>0) {
