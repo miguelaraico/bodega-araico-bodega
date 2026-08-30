@@ -347,7 +347,8 @@ export default function BodegaApp() {
     ],
     precintas: [], // series: {id, serie, inicio, fin, total, usadas}
   });
-  const [selOp,        setSelOp]        = useState(null); // operacion seleccionada para ver/editar
+  const [selOp,        setSelOp]        = useState(null);
+  const [verHistorialCompleto, setVerHistorialCompleto] = useState(false); // operacion seleccionada para ver/editar
   const [formMat,      setFormMat]      = useState({});
   const pdfRef = useRef(null);
   const saveRef = useRef(null);
@@ -425,11 +426,22 @@ export default function BodegaApp() {
     };
   };
 
-  const histDep = (id, hastaFecha) => {
+  const histDep = (id, hastaFecha, soloActual) => {
     const hasta = hastaFecha || "9999-12-31";
-    return operaciones
+    let ops = operaciones
       .filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
       .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
+
+    if(soloActual) {
+      // Encontrar la fecha de la ultima entrada (llenado, vendimia o trasiego recibido)
+      const ultimaEntrada = operaciones
+        .filter(o=>(o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===id&&o.tipo==="trasiego"))
+        .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
+      if(ultimaEntrada) {
+        ops = ops.filter(o=>o.fecha>=ultimaEntrada.fecha);
+      }
+    }
+    return ops;
   };
 
   // Recalcula etiquetas de depositos afectados por un trasiego borrado
@@ -626,7 +638,7 @@ export default function BodegaApp() {
     const esBarrica = barricas.some(b=>b.id===dep.id);
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
     const pct = dep.capacidad>0?Math.round((litros/dep.capacidad)*100):0;
-    const hist = histDep(dep.id, fechaConsulta);
+    const hist = histDep(dep.id, fechaConsulta, !verHistorialCompleto);
     const col = (dep.tipoVino&&COLOR_TIPO[dep.tipoVino])?COLOR_TIPO[dep.tipoVino]:COLOR_TIPO.vacio;
 
     return (
@@ -696,7 +708,15 @@ export default function BodegaApp() {
           </div>
 
           {/* Historial */}
-          <div style={S.sec}>Historial</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,marginTop:16}}>
+            <div style={S.sec}>Historial</div>
+            <button onClick={()=>setVerHistorialCompleto(v=>!v)}
+              style={{background:"none",border:"1px solid "+C.border,borderRadius:8,padding:"3px 10px",
+                cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
+                color:verHistorialCompleto?C.gold:C.muted}}>
+              {verHistorialCompleto?"Solo vino actual":"Ver historial completo"}
+            </button>
+          </div>
           {hist.length===0&&<div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"24px"}}>Sin operaciones</div>}
           {hist.map(op=>{
             const t = TIPOS_OP.find(x=>x.id===op.tipo);
@@ -906,8 +926,20 @@ export default function BodegaApp() {
       // Limpiar deposito si queda vacio tras embotellado o salida granel
       if(["embotellado","salida_granel"].includes(f.tipo)&&f.depId) {
         const litrosAntes = litrosActuales(f.depId, hoy());
-        const litrosTras = parseFloat(f.litros||0) || (parseFloat(f.botellas||0) * ({"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20}[f.formato||"botella"]||0.75));
+        const caps = {"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20};
+        const litrosTras = parseFloat(f.litros||0) || (parseFloat(f.botellas||0) * (caps[f.formato||"botella"]||0.75));
         const merma = parseFloat(f.merma||0);
+        const diferencia = litrosAntes - litrosTras - merma;
+        // Avisar si quedan litros sin justificar (posible merma)
+        if(f.tipo==="embotellado" && diferencia>0 && diferencia<50 && !f.merma) {
+          if(window.confirm(`Quedan ${diferencia.toLocaleString("es-ES")} L sin envasar en ${f.depId}. ¿Los añado como merma?`)) {
+            setOperaciones(prev=>[{...f,id:Date.now(),merma:diferencia},...prev]);
+          } else {
+            setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
+          }
+        } else {
+          if(!f._editandoId) {/* ya se añadió arriba */}
+        }
         if(litrosAntes - litrosTras - merma <= 0) {
           setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:""}:d));
         }
