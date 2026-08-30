@@ -1276,8 +1276,8 @@ export default function BodegaApp() {
       almacen[k].botellas += parseFloat(op.botellas||0);
     });
 
-    // Descontar ventas de la app de ventas (solo desde 01/08/2026)
-    ventas.forEach(v=>{
+    // Descontar ventas de la app de ventas (solo desde 01/08/2026 en adelante)
+    ventas.filter(v=>v.fecha>="2026-08-01").forEach(v=>{
       (v.lineas||[]).forEach(l=>{
         const etiqueta = MAPA_PRODUCTOS[l.productoId];
         if(!etiqueta) return;
