@@ -383,7 +383,8 @@ export default function BodegaApp() {
       .forEach(op=>{
         if(["vendimia","llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) l+=parseFloat(op.litros||0);
         if(op.tipo==="trasiego"&&op.depDestino===id)                          l+=parseFloat(op.litros||0);
-        if(op.tipo==="trasiego"&&op.depId===id)                               l-=parseFloat(op.litros||0);
+        if(op.tipo==="trasiego"&&op.depDestino2===id)                         l+=parseFloat(op.litros2||0);
+        if(op.tipo==="trasiego"&&op.depId===id)                               l-=parseFloat(op.litros||0)+(parseFloat(op.litros2||0));
         if(["embotellado","salida_granel"].includes(op.tipo)&&op.depId===id) {
           const caps = {"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20};
           const litrosEnvase = op.litros ? parseFloat(op.litros) : (caps[op.formato||"botella"]||0.75)*parseFloat(op.botellas||0);
@@ -791,7 +792,44 @@ export default function BodegaApp() {
         const {_editandoId, ...opSinId} = f;
         setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId}:o));
       } else {
-        setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
+        const ops = [{...f,id:Date.now()}];
+        // Si hay segundo destino, crear operacion adicional
+        if(f.tipo==="trasiego"&&f.depDestino2&&f.litros2) {
+          ops.push({...f,id:Date.now()+1,depDestino:f.depDestino2,litros:f.litros2,depDestino2:undefined,litros2:undefined});
+        }
+        setOperaciones(prev=>[...ops,...prev]);
+      }
+
+      // Trasiego: heredar etiqueta al destino y limpiar origen si queda vacio
+      if(f.tipo==="trasiego"&&f.depId) {
+        const depOrigen = depositos.find(d=>d.id===f.depId);
+        const heredar = (depId) => {
+          if(depOrigen&&(depOrigen.tipoVino||depOrigen.etiqueta)) {
+            setDepositos(prev=>prev.map(d=>d.id===depId?{...d,
+              tipoVino: depOrigen.tipoVino||d.tipoVino,
+              anada:    depOrigen.anada||d.anada,
+              etiqueta: depOrigen.etiqueta||d.etiqueta,
+            }:d));
+          }
+          // Copiar historial del origen al destino (operaciones anteriores al trasiego)
+          const opsOrigen = operaciones
+            .filter(o=>o.depId===f.depId && o.fecha<=f.fecha)
+            .map(o=>({...o, id:Date.now()+Math.random(), depId:depId,
+              notas:(o.notas?o.notas+" | ":"")+"[Heredado de "+f.depId+"]"}));
+          if(opsOrigen.length>0) {
+            setOperaciones(prev=>[...opsOrigen,...prev]);
+          }
+        };
+        if(f.depDestino)  heredar(f.depDestino);
+        if(f.depDestino2) heredar(f.depDestino2);
+        // Limpiar origen si queda vacio
+        if(depOrigen&&!depOrigen.siempreLleno) {
+          const totalSale = parseFloat(f.litros||0) + parseFloat(f.litros2||0);
+          const litrosQuedan = litrosActuales(f.depId) - totalSale;
+          if(litrosQuedan<=0) {
+            setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:""}:d));
+          }
+        }
       }
 
       // Limpiar deposito si queda vacio tras embotellado o salida granel
@@ -997,15 +1035,33 @@ export default function BodegaApp() {
             <select style={S.input} value={f.depDestino||""} onChange={e=>set("depDestino",e.target.value)}>
               <option value="">-- Destino --</option>
               <optgroup label="Depositos">
-                {depositos.filter(d=>d.activo&&d.id!==f.depId).map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
+                {depositos.filter(d=>d.activo&&d.id!==f.depId).map(d=><option key={d.id} value={d.id}>{d.nombre}{d.tipoVino?" - "+d.tipoVino+" "+d.anada:""}</option>)}
               </optgroup>
               <optgroup label="Barricas francesas">
-                {barricas.filter(b=>b.tipo==="frances"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}</option>)}
+                {barricas.filter(b=>b.tipo==="frances"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}{b.etiqueta?" - "+b.etiqueta:""}</option>)}
               </optgroup>
               <optgroup label="Barricas americanas">
-                {barricas.filter(b=>b.tipo==="americano"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}</option>)}
+                {barricas.filter(b=>b.tipo==="americano"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}{b.etiqueta?" - "+b.etiqueta:""}</option>)}
               </optgroup>
             </select>
+            {/* Segundo destino opcional */}
+            <label style={S.label}>Segundo destino (opcional)</label>
+            <select style={S.input} value={f.depDestino2||""} onChange={e=>set("depDestino2",e.target.value)}>
+              <option value="">-- Sin segundo destino --</option>
+              <optgroup label="Depositos">
+                {depositos.filter(d=>d.activo&&d.id!==f.depId&&d.id!==f.depDestino).map(d=><option key={d.id} value={d.id}>{d.nombre}{d.tipoVino?" - "+d.tipoVino+" "+d.anada:""}</option>)}
+              </optgroup>
+              <optgroup label="Barricas francesas">
+                {barricas.filter(b=>b.tipo==="frances"&&b.activo&&b.id!==f.depDestino).map(b=><option key={b.id} value={b.id}>{b.nombre}{b.etiqueta?" - "+b.etiqueta:""}</option>)}
+              </optgroup>
+              <optgroup label="Barricas americanas">
+                {barricas.filter(b=>b.tipo==="americano"&&b.activo&&b.id!==f.depDestino).map(b=><option key={b.id} value={b.id}>{b.nombre}{b.etiqueta?" - "+b.etiqueta:""}</option>)}
+              </optgroup>
+            </select>
+            {f.depDestino2&&<>
+              <label style={S.label}>Litros al segundo destino</label>
+              <input type="number" style={S.input} placeholder="0" value={f.litros2||""} onChange={e=>set("litros2",e.target.value)}/>
+            </>}
           </>}
 
           {/* Tratamiento */}
