@@ -384,7 +384,11 @@ export default function BodegaApp() {
         if(["vendimia","llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) l+=parseFloat(op.litros||0);
         if(op.tipo==="trasiego"&&op.depDestino===id)                          l+=parseFloat(op.litros||0);
         if(op.tipo==="trasiego"&&op.depId===id)                               l-=parseFloat(op.litros||0);
-        if(["embotellado","salida_granel"].includes(op.tipo)&&op.depId===id)  l-=parseFloat(op.litros||0);
+        if(["embotellado","salida_granel"].includes(op.tipo)&&op.depId===id) {
+          const caps = {"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20};
+          const litrosEnvase = op.litros ? parseFloat(op.litros) : (caps[op.formato||"botella"]||0.75)*parseFloat(op.botellas||0);
+          l -= litrosEnvase + parseFloat(op.merma||0);
+        }
       });
     return Math.max(0,l);
   };
@@ -687,8 +691,7 @@ export default function BodegaApp() {
                   </div>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <Btn variant="ghost" small onClick={()=>{
-                      setFormOp({...selOp});
-                      setOperaciones(prev=>prev.filter(o=>o.id!==selOp.id));
+                      setFormOp({...selOp, _editandoId: selOp.id});
                       setSelOp(null);
                       setVista("nueva_op");
                     }}>Editar</Btn>
@@ -783,7 +786,13 @@ export default function BodegaApp() {
         }
       }
 
-      setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
+      // Si es edicion, reemplazar la operacion existente; si no, añadir nueva
+      if(f._editandoId) {
+        const {_editandoId, ...opSinId} = f;
+        setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId}:o));
+      } else {
+        setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
+      }
 
       // Limpiar deposito si queda vacio tras embotellado o salida granel
       if(["embotellado","salida_granel"].includes(f.tipo)&&f.depId) {
@@ -934,14 +943,51 @@ export default function BodegaApp() {
               const disponDest = depDest&&depDest.capacidad>0 ? depDest.capacidad - litrosActuales(destId) : null;
               const disponOrig = depOrig&&!depOrig.siempreLleno ? litrosActuales(origId) : null;
               return (<>
+                {disponOrig!==null&&<div style={{...S.card,background:"#0A1520",padding:"10px 12px",marginBottom:8}}>
+                  <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em"}}>Disponible en {depOrig.nombre}</div>
+                  <div style={{fontSize:20,fontWeight:700,color:C.gold}}>{fmtL(disponOrig)}</div>
+                </div>}
                 <input type="number" style={S.input} placeholder="0" value={f.litros||""} onChange={e=>set("litros",e.target.value)}/>
                 {disponDest!==null&&<div style={{fontSize:11,color:disponDest>0?C.accent:C.danger,marginTop:-4,marginBottom:8}}>
                   Capacidad disponible en {depDest.nombre}: {fmtL(disponDest)}
                 </div>}
-                {disponOrig!==null&&<div style={{fontSize:11,color:disponOrig>0?C.gold:C.danger,marginTop:-4,marginBottom:8}}>
-                  Disponible en {depOrig.nombre}: {fmtL(disponOrig)}
-                </div>}
               </>);
+            })()}
+          </>}
+
+          {/* Merma (solo en embotellado) */}
+          {esEmbotell&&<>
+            <label style={S.label}>Merma (litros)</label>
+            <input type="number" step="0.1" style={S.input} placeholder="0" value={f.merma||""} onChange={e=>set("merma",e.target.value)}/>
+            {(f.litros||f.merma)&&(()=>{
+              const caps = {"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20,"otro":parseFloat(f.capacidadEnvase||0)};
+              const cap = caps[f.formato||"botella"];
+              const litrosEnvase = cap * parseFloat(f.botellas||0);
+              const merma = parseFloat(f.merma||0);
+              const litrosTotales = litrosEnvase + merma;
+              const depOrig = depositos.find(d=>d.id===f.depId);
+              const disponOrig = depOrig&&!depOrig.siempreLleno ? litrosActuales(f.depId) : null;
+              return (
+                <div style={{...S.card,background:"rgba(200,169,110,0.08)",borderColor:C.gold,fontSize:12,marginBottom:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{color:C.muted}}>Litros envasados</span>
+                    <span style={{color:C.text}}>{litrosEnvase>0?fmtL(litrosEnvase):"-"}</span>
+                  </div>
+                  {merma>0&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{color:C.muted}}>Merma</span>
+                    <span style={{color:C.danger}}>{fmtL(merma)}</span>
+                  </div>}
+                  <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid "+C.border,paddingTop:4}}>
+                    <span style={{color:C.muted,fontWeight:700}}>Total a descontar</span>
+                    <span style={{color:C.gold,fontWeight:700}}>{fmtL(litrosTotales)}</span>
+                  </div>
+                  {disponOrig!==null&&litrosTotales>0&&<div style={{fontSize:11,color:litrosTotales<=disponOrig?C.accent:C.danger,marginTop:4}}>
+                    {litrosTotales<=disponOrig
+                      ? `Quedaran ${fmtL(disponOrig-litrosTotales)} en ${depOrig.nombre}`
+                      : `AVISO: supera los ${fmtL(disponOrig)} disponibles`}
+                  </div>}
+                </div>
+              );
             })()}
           </>}
 
