@@ -399,7 +399,6 @@ export default function BodegaApp() {
 
   // Calcula la etiqueta actual de un deposito desde sus operaciones
   const etiquetaActual = (id) => {
-    // Buscar la ultima operacion que trajo vino a este deposito
     const entradas = operaciones
       .filter(o=>o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
       .concat(operaciones.filter(o=>(o.depDestino===id||o.depDestino2===id)&&o.tipo==="trasiego"))
@@ -408,33 +407,29 @@ export default function BodegaApp() {
     if(entradas.length===0) return {tipoVino:"",anada:"",etiqueta:""};
 
     const ultima = entradas[0];
-    if(ultima.tipo==="trasiego") {
-      // Hereda del deposito origen — buscar la etiqueta del origen recursivamente
-      const getEtiquetaOrigen = (depId, visitados=[]) => {
-        if(visitados.includes(depId)) return {tipoVino:"",anada:"",etiqueta:""};
-        const dep = depositos.find(d=>d.id===depId);
-        if(!dep) return {tipoVino:"",anada:"",etiqueta:""};
-        // Si el origen tiene etiqueta guardada directamente, usarla
-        if(dep.tipoVino) return {tipoVino:dep.tipoVino, anada:dep.anada, etiqueta:dep.etiqueta};
-        // Si no, buscar de dónde vino el vino del origen
-        const entradasOrigen = operaciones
-          .filter(o=>o.depId===depId&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
-          .concat(operaciones.filter(o=>(o.depDestino===depId||o.depDestino2===depId)&&o.tipo==="trasiego"))
-          .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
-        if(entradasOrigen?.tipo==="trasiego") {
-          return getEtiquetaOrigen(entradasOrigen.depId, [...visitados, depId]);
-        }
-        return {tipoVino:dep.tipoVino||"", anada:dep.anada||"", etiqueta:dep.etiqueta||""};
-      };
-      return getEtiquetaOrigen(ultima.depId);
+
+    // Si la operacion tiene tipoVinoOrigen guardado, usarlo directamente
+    if(ultima.tipoVinoOrigen) {
+      return {tipoVino:ultima.tipoVinoOrigen, anada:ultima.anadaOrigen||"", etiqueta:ultima.etiquetaOrigen||""};
     }
-    // Para vendimia/llenado/entrada_granel usa lo que tiene el deposito guardado
+
+    if(ultima.tipo==="trasiego") {
+      // Buscar en el deposito origen
+      const dep = depositos.find(d=>d.id===ultima.depId);
+      if(dep?.tipoVino) return {tipoVino:dep.tipoVino, anada:dep.anada||"", etiqueta:dep.etiqueta||""};
+      // Buscar recursivamente en las entradas del origen
+      const entradaOrigen = operaciones
+        .filter(o=>(o.depDestino===ultima.depId||o.depDestino2===ultima.depId||o.depId===ultima.depId)&&o.tipoVinoOrigen)
+        .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
+      if(entradaOrigen?.tipoVinoOrigen) {
+        return {tipoVino:entradaOrigen.tipoVinoOrigen, anada:entradaOrigen.anadaOrigen||"", etiqueta:entradaOrigen.etiquetaOrigen||""};
+      }
+      return {tipoVino:"",anada:"",etiqueta:""};
+    }
+
+    // Para vendimia/llenado sin tipoVinoOrigen, usar el deposito guardado
     const dep = depositos.find(d=>d.id===id);
-    return {
-      tipoVino: dep?.tipoVino||"",
-      anada:    dep?.anada||"",
-      etiqueta: dep?.etiqueta||""
-    };
+    return {tipoVino:dep?.tipoVino||"", anada:dep?.anada||"", etiqueta:dep?.etiqueta||""};
   };
 
   const histDep = (id, hastaFecha, soloActual) => {
@@ -892,14 +887,17 @@ export default function BodegaApp() {
       // Si es edicion, reemplazar la operacion existente; si no, añadir nueva
       // Calcular litros ANTES de añadir la operacion
       const litrosOrigenAntes = f.tipo==="trasiego"&&f.depId ? litrosActuales(f.depId, hoy()) : 0;
+      // Guardar la etiqueta del origen EN la operacion de trasiego
+      const etiquetaOrigen = f.tipo==="trasiego"&&f.depId ? etiquetaActual(f.depId) : null;
 
       if(f._editandoId) {
         const {_editandoId, ...opSinId} = f;
         setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId}:o));
       } else {
-        const ops = [{...f,id:Date.now()}];
+        const ops = [{...f, id:Date.now(), ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{})}];
         if(f.tipo==="trasiego"&&f.depDestino2&&f.litros2) {
-          ops.push({...f,id:Date.now()+1,depDestino:f.depDestino2,litros:f.litros2,depDestino2:undefined,litros2:undefined});
+          ops.push({...f, id:Date.now()+1, depDestino:f.depDestino2, litros:f.litros2, depDestino2:undefined, litros2:undefined,
+            ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{})});
         }
         setOperaciones(prev=>[...ops,...prev]);
       }
