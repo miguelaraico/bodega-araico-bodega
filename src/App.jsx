@@ -105,6 +105,8 @@ const MAPA_PRODUCTOS = {
   "bib_5l":         "BiB 5L",
   "bib_10l":        "BiB 10L",
   "bib_15l":        "BiB 15L",
+  "cerveza_grape":  "Cerveza Grape",
+  "cerveza_negra":  "Cerveza Negra",
 };
 
 const guardarBodega = async (dep,bar,ops,cerv,mat,stk) => {
@@ -783,6 +785,15 @@ export default function BodegaApp() {
 
       setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
 
+      // Limpiar deposito si queda vacio tras embotellado o salida granel
+      if(["embotellado","salida_granel"].includes(f.tipo)&&f.depId) {
+        const litrosTras = parseFloat(f.litros||0) || (parseFloat(f.botellas||0) * ({"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20}[f.formato||"botella"]||0.75));
+        const litrosQuedan = litrosActuales(f.depId) - litrosTras;
+        if(litrosQuedan<=0) {
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:""}:d));
+        }
+      }
+
       // Descontar materiales si es embotellado
       if(f.tipo==="embotellado") {
         const cant = parseFloat(f.botellas||0);
@@ -995,26 +1006,32 @@ export default function BodegaApp() {
                 </button>
               ))}
             </div>
-            <label style={S.label}>Etiqueta / Producto</label>
-            <input type="text" style={S.input} placeholder="ej. Araico Tinto 2023" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
-            <label style={S.label}>Anada</label>
-            <input type="text" style={S.input} placeholder="ej. 2023" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
             <label style={S.label}>Formato de envase</label>
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
-              {[["botella","Botella 0,75L"],["bib5","BiB 5L"],["bib10","BiB 10L"],["bib15","BiB 15L"],["garrafa","Garrafa 20L"],["otro","Otro"]].map(([v,l])=>(
-                <button key={v} onClick={()=>set("formato",v)}
-                  style={{padding:"6px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
-                    border:"2px solid "+((f.formato||"botella")===v?C.gold:C.border),
-                    background:(f.formato||"botella")===v?"#1A2535":"transparent",
-                    color:(f.formato||"botella")===v?C.gold:C.muted}}>
-                  {l}
-                </button>
-              ))}
+              {[["botella","Botella 0,75L"],["bib5","BiB 5L"],["bib10","BiB 10L"],["bib15","BiB 15L"],["garrafa","Garrafa 20L"],["otro","Otro"]].map(([v,l])=>{
+                const etiquetaAuto = {"botella":"Araico Tinto","bib5":"BiB 5L","bib10":"BiB 10L","bib15":"BiB 15L","garrafa":"Garrafa 20L"};
+                return (
+                  <button key={v} onClick={()=>{
+                    set("formato",v);
+                    if(etiquetaAuto[v]) set("etiqueta", etiquetaAuto[v]);
+                  }}
+                    style={{padding:"6px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
+                      border:"2px solid "+((f.formato||"botella")===v?C.gold:C.border),
+                      background:(f.formato||"botella")===v?"#1A2535":"transparent",
+                      color:(f.formato||"botella")===v?C.gold:C.muted}}>
+                    {l}
+                  </button>
+                );
+              })}
             </div>
             {f.formato==="otro"&&<>
               <label style={S.label}>Capacidad del envase (litros)</label>
               <input type="number" step="0.1" style={S.input} placeholder="ej. 3" value={f.capacidadEnvase||""} onChange={e=>set("capacidadEnvase",e.target.value)}/>
             </>}
+            <label style={S.label}>Etiqueta / Producto</label>
+            <input type="text" style={S.input} placeholder="ej. Araico Tinto" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
+            <label style={S.label}>Anada</label>
+            <input type="text" style={S.input} placeholder="ej. 2025" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
             <label style={S.label}>Cantidad de envases</label>
             <input type="number" style={S.input} placeholder="0" value={f.botellas||""} onChange={e=>set("botellas",e.target.value)}/>
             {/* Calculo automatico de litros */}
@@ -1024,7 +1041,7 @@ export default function BodegaApp() {
               const litrosCalc = cap * parseFloat(f.botellas||0);
               return litrosCalc>0 ? <div style={{fontSize:12,color:C.accent,marginTop:-4,marginBottom:8}}>= {litrosCalc.toLocaleString("es-ES")} L totales</div> : null;
             })()}
-            <label style={S.label}>Tipo de botella</label>
+            <label style={S.label}>Tipo de botella / envase</label>
             <select style={S.input} value={f.tipoBottella||""} onChange={e=>set("tipoBottella",e.target.value)}>
               <option value="">-- Selecciona tipo --</option>
               {materiales.botellas.map(b=><option key={b.id} value={b.id}>{b.nombre} (stock: {fmt(b.stock)})</option>)}
