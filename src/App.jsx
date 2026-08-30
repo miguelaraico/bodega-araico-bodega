@@ -402,20 +402,31 @@ export default function BodegaApp() {
     // Buscar la ultima operacion que trajo vino a este deposito
     const entradas = operaciones
       .filter(o=>o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
-      .concat(operaciones.filter(o=>o.depDestino===id&&o.tipo==="trasiego"))
+      .concat(operaciones.filter(o=>(o.depDestino===id||o.depDestino2===id)&&o.tipo==="trasiego"))
       .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
 
     if(entradas.length===0) return {tipoVino:"",anada:"",etiqueta:""};
 
     const ultima = entradas[0];
     if(ultima.tipo==="trasiego") {
-      // Hereda del deposito origen en el momento del trasiego
-      const depOrigen = depositos.find(d=>d.id===ultima.depId);
-      return {
-        tipoVino: depOrigen?.tipoVino||"",
-        anada:    depOrigen?.anada||"",
-        etiqueta: depOrigen?.etiqueta||""
+      // Hereda del deposito origen — buscar la etiqueta del origen recursivamente
+      const getEtiquetaOrigen = (depId, visitados=[]) => {
+        if(visitados.includes(depId)) return {tipoVino:"",anada:"",etiqueta:""};
+        const dep = depositos.find(d=>d.id===depId);
+        if(!dep) return {tipoVino:"",anada:"",etiqueta:""};
+        // Si el origen tiene etiqueta guardada directamente, usarla
+        if(dep.tipoVino) return {tipoVino:dep.tipoVino, anada:dep.anada, etiqueta:dep.etiqueta};
+        // Si no, buscar de dónde vino el vino del origen
+        const entradasOrigen = operaciones
+          .filter(o=>o.depId===depId&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
+          .concat(operaciones.filter(o=>(o.depDestino===depId||o.depDestino2===depId)&&o.tipo==="trasiego"))
+          .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
+        if(entradasOrigen?.tipo==="trasiego") {
+          return getEtiquetaOrigen(entradasOrigen.depId, [...visitados, depId]);
+        }
+        return {tipoVino:dep.tipoVino||"", anada:dep.anada||"", etiqueta:dep.etiqueta||""};
       };
+      return getEtiquetaOrigen(ultima.depId);
     }
     // Para vendimia/llenado/entrada_granel usa lo que tiene el deposito guardado
     const dep = depositos.find(d=>d.id===id);
