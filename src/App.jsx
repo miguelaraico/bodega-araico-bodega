@@ -344,7 +344,7 @@ export default function BodegaApp() {
     ],
     precintas: [], // series: {id, serie, inicio, fin, total, usadas}
   });
-  const [vistaMat,     setVistaMat]     = useState("lista"); // lista | nueva_entrada | nueva_precinta
+  const [selOp,        setSelOp]        = useState(null); // operacion seleccionada para ver/editar
   const [formMat,      setFormMat]      = useState({});
   const pdfRef = useRef(null);
   const saveRef = useRef(null);
@@ -398,61 +398,57 @@ export default function BodegaApp() {
     </div>
   );
 
-  // ── VISTA IMPORTAR ANALISIS PDF ───────────────────────────────────────────
+  // ── VISTA IMPORTAR ANALISIS ────────────────────────────────────────────────
   if(vista==="importar_analisis") {
-    const todosContenedoresIds = [...depositos,...barricas].filter(d=>d.activo).map(d=>d.id);
 
-    const subirPDF = async (e) => {
-      const file = e.target.files[0];
-      if(!file) return;
-      setLeyendoPDF(true);
-      try {
-        const base64 = await new Promise((res,rej) => {
-          const r = new FileReader();
-          r.onload = () => res(r.result.split(",")[1]);
-          r.onerror = rej;
-          r.readAsDataURL(file);
-        });
-        const resultado = await leerAnalisisPDF(base64, file.type);
-        // Intentar asignar deposito automaticamente
-        const muestrasConDep = resultado.muestras.map(m => {
-          const idLimpio = m.identificador.replace(/[-\s]/g,"").toUpperCase();
-          const depMatch = [...depositos,...barricas].find(d => 
-            d.id.replace(/[-\s]/g,"").toUpperCase() === idLimpio ||
-            d.nombre.replace(/[-\s]/g,"").toUpperCase() === idLimpio
-          );
-          return { ...m, depAsignado: depMatch?.id || "", ignorar: false, fecha: resultado.fecha };
-        });
-        setAnalisisPDF({ ...resultado, muestras: muestrasConDep });
-      } catch(err) {
-        alert("Error al leer el PDF. Intentalo de nuevo.");
-        console.error(err);
-      }
-      setLeyendoPDF(false);
-      e.target.value = "";
+    const parsearTexto = (texto) => {
+      const fechaMatch = texto.match(/(\d{2})[\/-](\d{2})[\/-](\d{4})/);
+      const fecha = fechaMatch ? `${fechaMatch[3]}-${fechaMatch[2]}-${fechaMatch[1]}` : hoy();
+      const pedidoMatch = texto.match(/N[ºo°]?\s*[Pp]edido[:\s]+(\d+)/i);
+      const nPedido = pedidoMatch ? pedidoMatch[1] : "";
+      const muestras = [];
+      const lineas = texto.split(/\n/).map(l=>l.trim()).filter(l=>l);
+      lineas.forEach(linea => {
+        const match = linea.match(/(\d{2}\/\d+)\s+[Vv]ino\s+([A-Za-z0-9\-]+)\s+([A-Za-z\s]+)\s+([\d.,]+)/);
+        if(match) {
+          const nums = linea.match(/[\d]+[.,][\d]+/g)||[];
+          muestras.push({
+            nMuestra:match[1], identificador:match[2], producto:match[3].trim(),
+            gradoAlcohol: nums[0]?parseFloat(nums[0].replace(",",".")):null,
+            acidezTotal:  nums[1]?parseFloat(nums[1].replace(",",".")):null,
+            pH:           nums[2]?parseFloat(nums[2].replace(",",".")):null,
+            acidezVolatil:nums[3]?parseFloat(nums[3].replace(",",".")):null,
+            so2Libre:     nums[4]?parseFloat(nums[4].replace(",",".")):null,
+            so2Total:     nums[5]?parseFloat(nums[5].replace(",",".")):null,
+            azucares:     nums[6]?parseFloat(nums[6].replace(",",".")):null,
+            depAsignado:"", ignorar:false, fecha,
+          });
+        }
+      });
+      const muestrasConDep = muestras.map(m=>{
+        const idLimpio = m.identificador.replace(/[-\s]/g,"").toUpperCase();
+        const depMatch = [...depositos,...barricas].find(d=>
+          d.id.replace(/[-\s]/g,"").toUpperCase()===idLimpio ||
+          d.nombre.replace(/[-\s]/g,"").toUpperCase()===idLimpio
+        );
+        return {...m, depAsignado: depMatch?.id||""};
+      });
+      return {fecha, nPedido, muestras: muestrasConDep};
     };
 
     const confirmarAnalisis = () => {
-      const nuevasOps = analisisPDF.muestras
-        .filter(m => !m.ignorar && m.depAsignado)
-        .map(m => ({
-          id: Date.now() + Math.random(),
-          depId: m.depAsignado,
-          tipo: "analisis",
-          fecha: m.fecha || hoy(),
-          ph: m.pH?.toString() || "",
-          acidez: m.acidezTotal?.toString() || "",
-          alcohol: m.gradoAlcohol?.toString() || "",
-          acidezV: m.acidezVolatil?.toString() || "",
-          so2libre: m.so2Libre?.toString() || "",
-          so2total: m.so2Total?.toString() || "",
-          azucares: m.azucares?.toString() || "",
-          acidoMalico: m.acidoMalico?.toString() || "",
-          notas: "Boletin "+analisisPDF.nPedido+" - Muestra "+m.nMuestra,
+      const nuevasOps = (analisisPDF?.muestras||[])
+        .filter(m=>!m.ignorar&&m.depAsignado)
+        .map(m=>({
+          id:Date.now()+Math.random(), depId:m.depAsignado, tipo:"analisis",
+          fecha:m.fecha||hoy(), ph:m.pH?.toString()||"",
+          acidez:m.acidezTotal?.toString()||"", alcohol:m.gradoAlcohol?.toString()||"",
+          acidezV:m.acidezVolatil?.toString()||"", so2libre:m.so2Libre?.toString()||"",
+          so2total:m.so2Total?.toString()||"", azucares:m.azucares?.toString()||"",
+          notas:"Boletin "+(analisisPDF?.nPedido||"")+" - Muestra "+m.nMuestra,
         }));
-      setOperaciones(prev => [...nuevasOps, ...prev]);
-      setAnalisisPDF(null);
-      setVista("lista");
+      setOperaciones(prev=>[...nuevasOps,...prev]);
+      setAnalisisPDF(null); setVista("lista");
     };
 
     return (
@@ -465,60 +461,67 @@ export default function BodegaApp() {
           {analisisPDF&&<Btn variant="gold" onClick={confirmarAnalisis}>Confirmar</Btn>}
         </div>
         <div style={S.body}>
-
-          {/* Subir PDF */}
           {!analisisPDF&&<>
-            <div style={{...S.card,textAlign:"center",padding:"24px 16px"}}>
-              <div style={{fontSize:32,marginBottom:12}}>📄</div>
-              <div style={{fontSize:14,color:C.muted,marginBottom:16}}>Sube el PDF del boletin del laboratorio y la app extraera los analisis automaticamente</div>
-              {leyendoPDF
-                ? <div style={{color:C.gold,fontSize:14}}>Leyendo PDF...</div>
-                : <Btn variant="gold" onClick={()=>pdfRef.current?.click()}>Subir PDF</Btn>
-              }
-              <input ref={pdfRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={subirPDF}/>
+            <div style={S.card}>
+              <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
+                Abre el PDF en el ordenador, selecciona todo (<b style={{color:C.text}}>Ctrl+A</b>), copia (<b style={{color:C.text}}>Ctrl+C</b>) y pega aqui:
+              </div>
+              <textarea style={{...S.input,minHeight:180,resize:"vertical",fontSize:12}}
+                placeholder="Pega aqui el texto del boletin..."
+                value={formOp.textoPDF||""}
+                onChange={e=>setFormOp(p=>({...p,textoPDF:e.target.value}))}/>
+              <div style={{marginTop:8}}>
+                <Btn variant="gold" full onClick={()=>{
+                  if(!formOp.textoPDF?.trim()) return;
+                  setAnalisisPDF(parsearTexto(formOp.textoPDF));
+                }}>Extraer datos</Btn>
+              </div>
             </div>
-            <div style={{...S.card,background:"rgba(200,169,110,0.1)",borderColor:C.gold,fontSize:13,color:C.muted}}>
-              O si prefieres introducir el analisis manualmente, usa el boton + Operacion y selecciona "Analisis"
+            <div style={{...S.card,background:"rgba(200,169,110,0.08)",borderColor:C.gold,fontSize:12,color:C.muted}}>
+              Si prefieres introducir el analisis manualmente, usa + Operacion → Analisis
             </div>
           </>}
-
-          {/* Revision de muestras */}
           {analisisPDF&&<>
-            <div style={{...S.card,background:"#0A1520",borderColor:C.gold}}>
+            <div style={{...S.card,background:"#0A1520",borderColor:C.gold,marginBottom:8}}>
               <div style={{fontSize:11,color:C.muted,textTransform:"uppercase"}}>Boletin {analisisPDF.nPedido}</div>
-              <div style={{fontSize:14,color:C.gold,marginTop:2}}>{fmtF(analisisPDF.fecha)} - {analisisPDF.muestras.length} muestras</div>
+              <div style={{fontSize:14,color:C.gold,marginTop:2}}>{fmtF(analisisPDF.fecha)} — {analisisPDF.muestras.length} muestras</div>
             </div>
-            <div style={S.sec}>Revisa y confirma cada muestra</div>
+            {analisisPDF.muestras.length===0&&(
+              <div style={{...S.card,color:C.danger,fontSize:13}}>
+                No se pudieron extraer muestras. Introduce los datos manualmente desde + Operacion → Analisis.
+              </div>
+            )}
             {analisisPDF.muestras.map((m,i)=>(
-              <div key={i} style={{...S.card,marginBottom:8,opacity:m.ignorar?0.4:1,borderLeft:"3px solid "+(m.ignorar?C.border:m.depAsignado?C.accent:C.gold)}}>
+              <div key={i} style={{...S.card,marginBottom:8,opacity:m.ignorar?0.4:1,
+                borderLeft:"3px solid "+(m.ignorar?C.border:m.depAsignado?C.accent:C.gold)}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div>
                     <div style={{fontSize:14,fontWeight:700,color:C.gold}}>Muestra {m.nMuestra}</div>
-                    <div style={{fontSize:12,color:C.muted}}>{m.producto} - Identif: {m.identificador}</div>
+                    <div style={{fontSize:12,color:C.muted}}>{m.producto} — {m.identificador}</div>
                   </div>
-                  <button onClick={()=>setAnalisisPDF(prev=>({...prev,muestras:prev.muestras.map((x,j)=>j===i?{...x,ignorar:!x.ignorar}:x)}))}
-                    style={{background:"none",border:"1px solid "+C.border,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,color:m.ignorar?C.accent:C.danger}}>
+                  <button onClick={()=>setAnalisisPDF(prev=>({...prev,
+                    muestras:prev.muestras.map((x,j)=>j===i?{...x,ignorar:!x.ignorar}:x)}))}
+                    style={{background:"none",border:"1px solid "+C.border,borderRadius:8,padding:"4px 10px",
+                      cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,color:m.ignorar?C.accent:C.danger}}>
                     {m.ignorar?"Incluir":"Ignorar"}
                   </button>
                 </div>
                 {!m.ignorar&&<>
-                  {/* Datos extraidos */}
                   <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10,fontSize:11,color:C.muted}}>
                     {m.gradoAlcohol&&<span>Alc: <b style={{color:C.text}}>{m.gradoAlcohol}%</b></span>}
                     {m.acidezTotal&&<span>Acid.T: <b style={{color:C.text}}>{m.acidezTotal} g/L</b></span>}
                     {m.pH&&<span>pH: <b style={{color:C.text}}>{m.pH}</b></span>}
-                    {m.acidezVolatil&&<span>Acid.V: <b style={{color:C.text}}>{m.acidezVolatil} g/L</b></span>}
-                    {m.so2Libre&&<span>SO2L: <b style={{color:C.text}}>{m.so2Libre} mg/L</b></span>}
-                    {m.azucares&&<span>Az: <b style={{color:C.text}}>{m.azucares} g/L</b></span>}
+                    {m.acidezVolatil&&<span>AV: <b style={{color:C.text}}>{m.acidezVolatil}</b></span>}
+                    {m.so2Libre&&<span>SO2L: <b style={{color:C.text}}>{m.so2Libre}</b></span>}
                   </div>
-                  {/* Asignar deposito */}
                   <label style={S.label}>Asignar a deposito / barrica</label>
                   <select style={{...S.input,marginBottom:0,borderColor:m.depAsignado?C.accent:C.danger}}
                     value={m.depAsignado}
-                    onChange={e=>setAnalisisPDF(prev=>({...prev,muestras:prev.muestras.map((x,j)=>j===i?{...x,depAsignado:e.target.value}:x)}))}>
-                    <option value="">-- Sin asignar (no se importara) --</option>
+                    onChange={e=>setAnalisisPDF(prev=>({...prev,
+                      muestras:prev.muestras.map((x,j)=>j===i?{...x,depAsignado:e.target.value}:x)}))}>
+                    <option value="">-- Sin asignar --</option>
                     <optgroup label="Depositos">
-                      {depositos.filter(d=>d.activo).map(d=><option key={d.id} value={d.id}>{d.nombre} {d.tipoVino?("- "+d.tipoVino+" "+d.anada):""}</option>)}
+                      {depositos.filter(d=>d.activo).map(d=><option key={d.id} value={d.id}>{d.nombre}{d.tipoVino?" - "+d.tipoVino+" "+d.anada:""}</option>)}
                     </optgroup>
                     <optgroup label="Barricas francesas">
                       {barricas.filter(b=>b.tipo==="frances"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}</option>)}
@@ -527,13 +530,13 @@ export default function BodegaApp() {
                       {barricas.filter(b=>b.tipo==="americano"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}</option>)}
                     </optgroup>
                   </select>
-                  {!m.depAsignado&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>Sin deposito asignado - esta muestra no se importara</div>}
+                  {!m.depAsignado&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>Sin deposito — no se importara</div>}
                 </>}
               </div>
             ))}
-            <div style={{marginTop:8}}>
+            {analisisPDF.muestras.length>0&&<div style={{marginTop:8}}>
               <Btn variant="gold" onClick={confirmarAnalisis} full>Confirmar e importar</Btn>
-            </div>
+            </div>}
           </>}
         </div>
       </div>
@@ -625,7 +628,8 @@ export default function BodegaApp() {
             const esSalida  = ["embotellado","salida_granel"].includes(op.tipo)||(op.tipo==="trasiego"&&op.depId===dep.id&&op.depDestino);
             const col = esEntrada?C.accent:esSalida?C.danger:C.gold;
             return (
-              <div key={op.id} style={{...S.card,borderLeft:"3px solid "+col,marginBottom:6,padding:"10px 12px"}}>
+              <div key={op.id} onClick={()=>setSelOp(op)}
+                style={{...S.card,borderLeft:"3px solid "+col,marginBottom:6,padding:"10px 12px",cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                   <span style={{fontSize:12,fontWeight:700,color:col}}>{t?.label||op.tipo}</span>
                   <span style={{fontSize:11,color:C.muted}}>{fmtF(op.fecha)}</span>
@@ -663,6 +667,66 @@ export default function BodegaApp() {
             );
           })}
         </div>
+
+        {/* Modal detalle/edicion operacion */}
+        {selOp&&(()=>{
+          const t = TIPOS_OP.find(x=>x.id===selOp.tipo);
+          const col = ["vendimia","llenado"].includes(selOp.tipo)?C.accent:["embotellado","salida_granel"].includes(selOp.tipo)?C.danger:C.gold;
+          return (
+            <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:50,
+              display:"flex",alignItems:"flex-end",justifyContent:"center"}}
+              onClick={e=>{if(e.target===e.currentTarget)setSelOp(null);}}>
+              <div style={{...S.card,width:"100%",maxWidth:480,maxHeight:"80vh",overflowY:"auto",
+                borderRadius:"16px 16px 0 0",borderBottom:"none",paddingBottom:32}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:700,color:col}}>{t?.label||selOp.tipo}</div>
+                    <div style={{fontSize:12,color:C.muted}}>{fmtF(selOp.fecha)}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Btn variant="ghost" small onClick={()=>{
+                      setFormOp({...selOp});
+                      setOperaciones(prev=>prev.filter(o=>o.id!==selOp.id));
+                      setSelOp(null);
+                      setVista("nueva_op");
+                    }}>Editar</Btn>
+                    <button onClick={()=>setSelOp(null)}
+                      style={{background:"none",border:"none",color:C.muted,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
+                  </div>
+                </div>
+                {selOp.litros&&<div style={S.row}><span style={{color:C.muted}}>Litros</span><span style={{fontWeight:700}}>{fmtL(selOp.litros)}</span></div>}
+                {selOp.kg&&<div style={S.row}><span style={{color:C.muted}}>Kg uva</span><span>{selOp.kg} Kg</span></div>}
+                {selOp.variedad&&<div style={S.row}><span style={{color:C.muted}}>Variedad</span><span>{selOp.variedad}</span></div>}
+                {selOp.campana&&<div style={S.row}><span style={{color:C.muted}}>Campana</span><span>{selOp.campana}</span></div>}
+                {selOp.grado&&<div style={S.row}><span style={{color:C.muted}}>Grado</span><span>{selOp.grado} %vol</span></div>}
+                {selOp.densidad&&<div style={S.row}><span style={{color:C.muted}}>Densidad</span><span style={{fontWeight:700,color:C.accent}}>{selOp.densidad} g/L</span></div>}
+                {selOp.temperatura&&<div style={S.row}><span style={{color:C.muted}}>Temperatura</span><span style={{fontWeight:700,color:C.gold}}>{selOp.temperatura} C</span></div>}
+                {selOp.hora&&<div style={S.row}><span style={{color:C.muted}}>Hora</span><span>{selOp.hora}</span></div>}
+                {selOp.ph&&<div style={S.row}><span style={{color:C.muted}}>pH</span><span style={{fontWeight:700}}>{selOp.ph}</span></div>}
+                {selOp.acidez&&<div style={S.row}><span style={{color:C.muted}}>Acidez total</span><span>{selOp.acidez} g/L</span></div>}
+                {selOp.alcohol&&<div style={S.row}><span style={{color:C.muted}}>Alcohol</span><span>{selOp.alcohol} %</span></div>}
+                {selOp.acidezV&&<div style={S.row}><span style={{color:C.muted}}>Acidez volatil</span><span>{selOp.acidezV} g/L</span></div>}
+                {selOp.so2libre&&<div style={S.row}><span style={{color:C.muted}}>SO2 libre</span><span>{selOp.so2libre} mg/L</span></div>}
+                {selOp.so2total&&<div style={S.row}><span style={{color:C.muted}}>SO2 total</span><span>{selOp.so2total} mg/L</span></div>}
+                {selOp.azucares&&<div style={S.row}><span style={{color:C.muted}}>Azucares</span><span>{selOp.azucares} g/L</span></div>}
+                {selOp.producto&&<div style={S.row}><span style={{color:C.muted}}>Producto</span><span>{selOp.producto}</span></div>}
+                {selOp.dosis&&<div style={S.row}><span style={{color:C.muted}}>Dosis</span><span>{selOp.dosis}</span></div>}
+                {selOp.depDestino&&<div style={S.row}><span style={{color:C.muted}}>Destino</span><span>{selOp.depDestino}</span></div>}
+                {selOp.etiqueta&&<div style={S.row}><span style={{color:C.muted}}>Etiqueta</span><span>{selOp.etiqueta}</span></div>}
+                {selOp.botellas&&<div style={S.row}><span style={{color:C.muted}}>Unidades</span><span>{selOp.botellas}</span></div>}
+                {selOp.notas&&<div style={{marginTop:10,fontSize:12,color:C.muted,fontStyle:"italic"}}>{selOp.notas}</div>}
+                <div style={{marginTop:16}}>
+                  <Btn variant="danger" small onClick={()=>{
+                    if(window.confirm("¿Borrar esta operacion?")) {
+                      setOperaciones(prev=>prev.filter(o=>o.id!==selOp.id));
+                      setSelOp(null);
+                    }
+                  }}>Borrar operacion</Btn>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
