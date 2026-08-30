@@ -327,6 +327,7 @@ export default function BodegaApp() {
   const [filtroTipo,   setFiltroTipo]   = useState("todos");
   const [filtroAnada,  setFiltroAnada]  = useState("todas");
   const [filtroTipoB,  setFiltroTipoB]  = useState("todos");
+  const [fechaConsulta,setFechaConsulta]= useState(hoy());
   const [analisisPDF,  setAnalisisPDF]  = useState(null);  // muestras extraidas del PDF
   const [leyendoPDF,   setLeyendoPDF]   = useState(false);
   const [cervezas,     setCervezas]     = useState({grape:0, negra:0});
@@ -375,10 +376,11 @@ export default function BodegaApp() {
     },1200);
   },[depositos,barricas,operaciones,cervezas,materiales,stockInicial]);
 
-  const litrosActuales = (id) => {
+  const litrosActuales = (id, hastaFecha) => {
     const contenedor = [...depositos,...barricas].find(d=>d.id===id);
     let l = parseFloat(contenedor?.litrosIniciales||0);
-    operaciones.filter(o=>o.depId===id||o.depDestino===id)
+    const hasta = hastaFecha || "9999-12-31";
+    operaciones.filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
       .sort((a,b)=>a.fecha.localeCompare(b.fecha))
       .forEach(op=>{
         if(["vendimia","llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) l+=parseFloat(op.litros||0);
@@ -394,8 +396,12 @@ export default function BodegaApp() {
     return Math.max(0,l);
   };
 
-  const histDep = (id) => operaciones.filter(o=>o.depId===id||o.depDestino===id)
-    .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
+  const histDep = (id, hastaFecha) => {
+    const hasta = hastaFecha || "9999-12-31";
+    return operaciones
+      .filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
+      .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
+  };
 
   const todosContenedores = [...depositos,...barricas];
 
@@ -555,9 +561,9 @@ export default function BodegaApp() {
     const dep = todosContenedores.find(d=>d.id===selId);
     if(!dep){setVista("lista");return null;}
     const esBarrica = barricas.some(b=>b.id===dep.id);
-    const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id);
+    const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
     const pct = dep.capacidad>0?Math.round((litros/dep.capacidad)*100):0;
-    const hist = histDep(dep.id);
+    const hist = histDep(dep.id, fechaConsulta);
     const col = (dep.tipoVino&&COLOR_TIPO[dep.tipoVino])?COLOR_TIPO[dep.tipoVino]:COLOR_TIPO.vacio;
 
     return (
@@ -809,6 +815,7 @@ export default function BodegaApp() {
               tipoVino: depOrigen.tipoVino||d.tipoVino,
               anada:    depOrigen.anada||d.anada,
               etiqueta: depOrigen.etiqueta||d.etiqueta,
+              campaniaInicio: depOrigen.campaniaInicio||f.fecha,
             }:d));
           }
           // Copiar solo analisis y tratamientos del origen al destino (no llenados ni trasiegos que afectan litros)
@@ -828,7 +835,7 @@ export default function BodegaApp() {
           const totalSale = parseFloat(f.litros||0) + parseFloat(f.litros2||0);
           const litrosQuedan = litrosActuales(f.depId) - totalSale;
           if(litrosQuedan<=0) {
-            setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:""}:d));
+            setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null}:d));
           }
         }
       }
@@ -838,7 +845,7 @@ export default function BodegaApp() {
         const litrosTras = parseFloat(f.litros||0) || (parseFloat(f.botellas||0) * ({"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20}[f.formato||"botella"]||0.75));
         const litrosQuedan = litrosActuales(f.depId) - litrosTras;
         if(litrosQuedan<=0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:""}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null}:d));
         }
       }
 
@@ -1195,7 +1202,8 @@ export default function BodegaApp() {
   // ── TAB DEPOSITOS ──────────────────────────────────────────────────────────
   if(tab==="depositos") {
     const deps = depositos.filter(d=>d.activo);
-    const totalL   = deps.reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id)),0);
+    const esModoHistorico = fechaConsulta !== hoy();
+    const totalL   = deps.reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta)),0);
     const totalCap = deps.reduce((s,d)=>s+d.capacidad,0);
     const pctTotal = totalCap>0?Math.round((totalL/totalCap)*100):0;
 
@@ -1220,6 +1228,19 @@ export default function BodegaApp() {
             </Btn>
           </div>
         </div>
+        {/* Selector fecha consulta */}
+        <div style={{background:"#0A1520",borderBottom:"1px solid "+C.border,padding:"8px 16px",display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:12,color:C.muted,flexShrink:0}}>Ver bodega al:</span>
+          <input type="date" value={fechaConsulta} onChange={e=>setFechaConsulta(e.target.value)}
+            style={{flex:1,padding:"4px 8px",borderRadius:8,border:"1px solid "+C.border,fontFamily:"Georgia,serif",fontSize:13,color:C.text,background:"#1A2535"}}/>
+          {esModoHistorico&&<button onClick={()=>setFechaConsulta(hoy())}
+            style={{background:"none",border:"1px solid "+C.border,borderRadius:8,padding:"4px 10px",fontSize:11,color:C.gold,cursor:"pointer",fontFamily:"Georgia,serif",flexShrink:0}}>
+            Hoy
+          </button>}
+        </div>
+        {esModoHistorico&&<div style={{background:"rgba(200,169,110,0.1)",borderBottom:"1px solid "+C.gold,padding:"6px 16px",fontSize:11,color:C.gold,textAlign:"center"}}>
+          Viendo estado del {fmtF(fechaConsulta)} — modo consulta histórica
+        </div>}
         <div style={{...S.body,flex:1}}>
 
           {/* Resumen total */}
@@ -1278,7 +1299,7 @@ export default function BodegaApp() {
           {/* Cuadricula de tanques */}
           <div style={{display:"flex",flexWrap:"wrap",justifyContent:"flex-start"}}>
             {deps.map(dep=>{
-              const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id);
+              const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
               const matchTipo  = filtroTipo==="todos"  || (dep.tipoVino||"")=== filtroTipo;
               const matchAnada = filtroAnada==="todas" || (dep.anada||"")=== filtroAnada;
               const resaltado  = (filtroTipo==="todos" && filtroAnada==="todas") ? true : matchTipo && matchAnada;
