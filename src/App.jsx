@@ -396,6 +396,35 @@ export default function BodegaApp() {
     return Math.max(0,l);
   };
 
+  // Calcula la etiqueta actual de un deposito desde sus operaciones
+  const etiquetaActual = (id) => {
+    // Buscar la ultima operacion que trajo vino a este deposito
+    const entradas = operaciones
+      .filter(o=>o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
+      .concat(operaciones.filter(o=>o.depDestino===id&&o.tipo==="trasiego"))
+      .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
+
+    if(entradas.length===0) return {tipoVino:"",anada:"",etiqueta:""};
+
+    const ultima = entradas[0];
+    if(ultima.tipo==="trasiego") {
+      // Hereda del deposito origen en el momento del trasiego
+      const depOrigen = depositos.find(d=>d.id===ultima.depId);
+      return {
+        tipoVino: depOrigen?.tipoVino||"",
+        anada:    depOrigen?.anada||"",
+        etiqueta: depOrigen?.etiqueta||""
+      };
+    }
+    // Para vendimia/llenado/entrada_granel usa lo que tiene el deposito guardado
+    const dep = depositos.find(d=>d.id===id);
+    return {
+      tipoVino: dep?.tipoVino||"",
+      anada:    dep?.anada||"",
+      etiqueta: dep?.etiqueta||""
+    };
+  };
+
   const histDep = (id, hastaFecha) => {
     const hasta = hastaFecha || "9999-12-31";
     return operaciones
@@ -1243,11 +1272,17 @@ export default function BodegaApp() {
     const pctTotal = totalCap>0?Math.round((totalL/totalCap)*100):0;
 
     // Anadas disponibles
-    const anadasDisp = [...new Set(deps.map(d=>d.anada).filter(Boolean))].sort((a,b)=>b-a);
+    const anadasDisp = [...new Set(deps.map(d=>etiquetaActual(d.id).anada).filter(Boolean))].sort((a,b)=>b-a);
 
     // Totales por tipo
-    const totalTinto  = deps.filter(d=>d.tipoVino==="tinto"). reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id)),0);
-    const totalBlanco = deps.filter(d=>d.tipoVino==="blanco").reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id)),0);
+    const totalTinto  = deps.filter(d=>{
+      const l = d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta);
+      return l>0 && etiquetaActual(d.id).tipoVino==="tinto";
+    }).reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta)),0);
+    const totalBlanco = deps.filter(d=>{
+      const l = d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta);
+      return l>0 && etiquetaActual(d.id).tipoVino==="blanco";
+    }).reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta)),0);
 
     return (
       <div style={{...S.app,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
@@ -1335,11 +1370,13 @@ export default function BodegaApp() {
           <div style={{display:"flex",flexWrap:"wrap",justifyContent:"flex-start"}}>
             {deps.map(dep=>{
               const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
-              const matchTipo  = filtroTipo==="todos"  || (dep.tipoVino||"")=== filtroTipo;
-              const matchAnada = filtroAnada==="todas" || (dep.anada||"")=== filtroAnada;
+              const infoEtiqueta = litros>0 ? etiquetaActual(dep.id) : {tipoVino:"",anada:"",etiqueta:""};
+              const depConEtiqueta = {...dep, ...infoEtiqueta};
+              const matchTipo  = filtroTipo==="todos"  || (depConEtiqueta.tipoVino||"")=== filtroTipo;
+              const matchAnada = filtroAnada==="todas" || (depConEtiqueta.anada||"")=== filtroAnada;
               const resaltado  = (filtroTipo==="todos" && filtroAnada==="todas") ? true : matchTipo && matchAnada;
               return (
-                <Tanque key={dep.id} dep={dep} litros={litros} resaltado={resaltado}
+                <Tanque key={dep.id} dep={depConEtiqueta} litros={litros} resaltado={resaltado}
                   onClick={()=>{setSelId(dep.id);setVista("ficha");}}/>
               );
             })}
@@ -1855,4 +1892,3 @@ export default function BodegaApp() {
 
   return null;
 }
-
