@@ -77,6 +77,7 @@ const cargarBodega = async () => {
       cervezas:    map.cervezas    ? JSON.parse(map.cervezas)    : null,
       materiales:  map.materiales  ? JSON.parse(map.materiales)  : null,
       stock:       map.stock       ? JSON.parse(map.stock)       : null,
+      productos:   map.productos   ? JSON.parse(map.productos)   : null,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null}; }
 };
@@ -109,7 +110,7 @@ const MAPA_PRODUCTOS = {
   "cerveza_negra":  "Cerveza Negra",
 };
 
-const guardarBodega = async (dep,bar,ops,cerv,mat,stk) => {
+const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods) => {
   try {
     await supaFetch("POST","bodega_datos",[
       {bodega_id:BODEGA_ID,clave:"depositos",   valor:JSON.stringify(dep)},
@@ -118,6 +119,7 @@ const guardarBodega = async (dep,bar,ops,cerv,mat,stk) => {
       {bodega_id:BODEGA_ID,clave:"cervezas",    valor:JSON.stringify(cerv)},
       {bodega_id:BODEGA_ID,clave:"materiales",  valor:JSON.stringify(mat)},
       {bodega_id:BODEGA_ID,clave:"stock",       valor:JSON.stringify(stk)},
+      {bodega_id:BODEGA_ID,clave:"productos",   valor:JSON.stringify(prods)},
     ]);
   } catch(e){ console.error(e); }
 };
@@ -346,8 +348,24 @@ export default function BodegaApp() {
       {id:"cn",  nombre:"Corcho Normal",      stock:0, lotes:[]},
       {id:"cc",  nombre:"Corcho Crianza",     stock:0, lotes:[]},
     ],
-    precintas: [], // series: {id, serie, inicio, fin, total, usadas}
+    precintas: [],
   });
+  const [productos, setProductos] = useState([
+    {id:"araico_tinto",   nombre:"Araico Tinto",         activo:true},
+    {id:"araico_blanco",  nombre:"Araico Blanco",         activo:true},
+    {id:"araico_crianza", nombre:"Araico Crianza",        activo:true},
+    {id:"blanco_barrica", nombre:"Araico Blanco Barrica", activo:true},
+    {id:"orgullo",        nombre:"Orgullo",               activo:true},
+    {id:"cuartillo",      nombre:"Cuartillo",             activo:true},
+    {id:"reserva",        nombre:"Reserva",               activo:true},
+    {id:"bib_5l",         nombre:"BiB 5L",                activo:true},
+    {id:"bib_10l",        nombre:"BiB 10L",               activo:true},
+    {id:"bib_15l",        nombre:"BiB 15L",               activo:true},
+    {id:"sin",            nombre:"Sin",                   activo:true},
+    {id:"ocio",           nombre:"OCIO",                  activo:true},
+    {id:"cerveza_grape",  nombre:"Cerveza Grape",         activo:true},
+    {id:"cerveza_negra",  nombre:"Cerveza Negra",         activo:true},
+  ]);
   const [selOp,        setSelOp]        = useState(null);
   const [verHistorialCompleto, setVerHistorialCompleto] = useState(false); // operacion seleccionada para ver/editar
   const [formMat,      setFormMat]      = useState({});
@@ -355,13 +373,14 @@ export default function BodegaApp() {
   const saveRef = useRef(null);
 
   useEffect(()=>{
-    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk})=>{
-      if(d)    setDepositos(d);         else setDepositos(DEPOSITOS_DEFAULT);
-      if(b)    setBarricas(b);          else setBarricas(BARRICAS_DEFAULT);
-      if(o)    setOperaciones(o);       else setOperaciones([]);
-      if(cerv) setCervezas(cerv);       else setCervezas({grape:0,negra:0});
-      if(mat)  setMateriales(mat);
-      if(stk)  setStockInicial(stk);
+    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk,productos:prods})=>{
+      if(d)     setDepositos(d);         else setDepositos(DEPOSITOS_DEFAULT);
+      if(b)     setBarricas(b);          else setBarricas(BARRICAS_DEFAULT);
+      if(o)     setOperaciones(o);       else setOperaciones([]);
+      if(cerv)  setCervezas(cerv);       else setCervezas({grape:0,negra:0});
+      if(mat)   setMateriales(mat);
+      if(stk)   setStockInicial(stk);
+      if(prods) setProductos(prods);
       setCargando(false);
     });
     // Cargar ventas de la app principal
@@ -373,10 +392,10 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial]);
+  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos]);
 
   const litrosActuales = (id, hastaFecha) => {
     const contenedor = [...depositos,...barricas].find(d=>d.id===id);
@@ -1254,8 +1273,11 @@ export default function BodegaApp() {
               <label style={S.label}>Capacidad del envase (litros)</label>
               <input type="number" step="0.1" style={S.input} placeholder="ej. 3" value={f.capacidadEnvase||""} onChange={e=>set("capacidadEnvase",e.target.value)}/>
             </>}
-            <label style={S.label}>Etiqueta / Producto</label>
-            <input type="text" style={S.input} placeholder="ej. Araico Tinto" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
+            <label style={S.label}>Producto</label>
+            <select style={S.input} value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}>
+              <option value="">-- Selecciona producto --</option>
+              {productos.filter(p=>p.activo).map(p=><option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+            </select>
             <label style={S.label}>Anada</label>
             <input type="text" style={S.input} placeholder="ej. 2025" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
             <label style={S.label}>Cantidad de envases</label>
@@ -1308,7 +1330,10 @@ export default function BodegaApp() {
               ))}
             </div>
             <label style={S.label}>Producto / Etiqueta</label>
-            <input type="text" style={S.input} placeholder="ej. Araico Blanco Barrica" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
+            <select style={S.input} value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}>
+              <option value="">-- Selecciona producto --</option>
+              {productos.filter(p=>p.activo).map(p=><option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+            </select>
             <label style={S.label}>Anada</label>
             <input type="text" style={S.input} placeholder="ej. 2024" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
             <label style={S.label}>Formato</label>
@@ -1335,7 +1360,10 @@ export default function BodegaApp() {
               Botellas que pasan del botellero al almacen etiquetadas
             </div>
             <label style={S.label}>Producto</label>
-            <input type="text" style={S.input} placeholder="ej. Araico Tinto 2023" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
+            <select style={S.input} value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}>
+              <option value="">-- Selecciona producto --</option>
+              {productos.filter(p=>p.activo).map(p=><option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+            </select>
             <label style={S.label}>Anada</label>
             <input type="text" style={S.input} placeholder="ej. 2023" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
             <label style={S.label}>Numero de botellas</label>
@@ -1873,6 +1901,22 @@ export default function BodegaApp() {
           <SeccionMaterial titulo="Botellas" items={materiales.botellas} categoria="botellas"/>
           <SeccionMaterial titulo="Corchos"  items={materiales.corchos}  categoria="corchos"/>
 
+          {/* Productos */}
+          <div style={{...S.sec,marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span>Productos</span>
+            <Btn variant="ghost" small onClick={()=>setFormMat({tipo:"nuevo_producto",nombre:""})}>+ Producto</Btn>
+          </div>
+          {productos.filter(p=>p.activo).map(p=>(
+            <div key={p.id} style={{...S.card,marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:14,color:C.text}}>{p.nombre}</span>
+              <button onClick={()=>setProductos(prev=>prev.map(x=>x.id===p.id?{...x,activo:false}:x))}
+                style={{background:"none",border:"1px solid "+C.border,borderRadius:8,padding:"4px 10px",
+                  cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,color:C.muted}}>
+                Ocultar
+              </button>
+            </div>
+          ))}
+
           {/* Precintas */}
           <div style={S.sec}>Precintas</div>
           {materiales.precintas.length===0
@@ -1929,6 +1973,28 @@ export default function BodegaApp() {
                   }));
                   setFormMat(null);
                 }} full>Confirmar</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal nuevo producto */}
+        {formMat&&formMat.tipo==="nuevo_producto"&&(
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.7)",zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{...S.card,width:"100%",maxWidth:360}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.gold,marginBottom:12}}>Nuevo producto</div>
+              <label style={S.label}>Nombre del producto</label>
+              <input type="text" style={S.input} placeholder="ej. Araico Rosado" value={formMat.nombre||""}
+                onChange={e=>setFormMat(p=>({...p,nombre:e.target.value}))}/>
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <Btn variant="ghost" onClick={()=>setFormMat(null)} full>Cancelar</Btn>
+                <Btn variant="gold" onClick={()=>{
+                  if(!formMat.nombre?.trim()) return;
+                  setProductos(prev=>[...prev,{
+                    id:"prod_"+Date.now(), nombre:formMat.nombre.trim(), activo:true
+                  }]);
+                  setFormMat(null);
+                }} full>Guardar</Btn>
               </div>
             </div>
           </div>
