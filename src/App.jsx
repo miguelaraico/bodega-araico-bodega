@@ -167,10 +167,11 @@ const BARRICAS_DEFAULT = [
 ];
 
 const TIPOS_OP = [
-  {id:"vendimia",      label:"Entrada vendimia"},
-  {id:"fermentacion",  label:"Fermentacion"},
-  {id:"entrada_granel",label:"Entrada granel"},
-  {id:"llenado",       label:"Llenado"},
+  {id:"vendimia",        label:"Entrada vendimia"},
+  {id:"fermentacion",    label:"Fermentacion"},
+  {id:"entrada_granel",  label:"Entrada granel"},
+  {id:"entrada_almacen", label:"Entrada directa almacen"},
+  {id:"llenado",         label:"Llenado"},
   {id:"trasiego",      label:"Trasiego"},
   {id:"sulfitado",     label:"Sulfitado"},
   {id:"clarificacion", label:"Clarificacion"},
@@ -409,7 +410,7 @@ export default function BodegaApp() {
     const ultima = entradas[0];
 
     // Si la operacion tiene tipoVinoOrigen guardado, usarlo directamente
-    if(ultima.tipoVinoOrigen) {
+    if(ultima?.tipoVinoOrigen) {
       return {tipoVino:ultima.tipoVinoOrigen, anada:ultima.anadaOrigen||"", etiqueta:ultima.etiquetaOrigen||""};
     }
 
@@ -427,7 +428,7 @@ export default function BodegaApp() {
       return {tipoVino:"",anada:"",etiqueta:""};
     }
 
-    // Para vendimia/llenado sin tipoVinoOrigen, usar el deposito guardado
+    // Para vendimia/llenado/entrada_granel sin tipoVinoOrigen, usar el deposito guardado
     const dep = depositos.find(d=>d.id===id);
     return {tipoVino:dep?.tipoVino||"", anada:dep?.anada||"", etiqueta:dep?.etiqueta||""};
   };
@@ -838,9 +839,10 @@ export default function BodegaApp() {
   if(vista==="nueva_op") {
     const f = formOp;
     const set = (k,v) => setFormOp(p=>({...p,[k]:v}));
-    const esVendimia    = f.tipo==="vendimia";
-    const esFermentacion= f.tipo==="fermentacion";
-    const esEntradaGran = f.tipo==="entrada_granel";
+    const esVendimia     = f.tipo==="vendimia";
+    const esFermentacion = f.tipo==="fermentacion";
+    const esEntradaGran  = f.tipo==="entrada_granel";
+    const esEntradaAlmacen = f.tipo==="entrada_almacen";
     const esTrasiego    = f.tipo==="trasiego";
     const esTrat     = ["sulfitado","clarificacion","filtracion","acidez","azucar"].includes(f.tipo);
     const esAnalisis = f.tipo==="analisis";
@@ -849,7 +851,7 @@ export default function BodegaApp() {
     const conLitros  = ["vendimia","llenado","trasiego","embotellado","salida_granel","entrada_granel"].includes(f.tipo);
 
     const guardar = () => {
-      if(!f.tipo||!f.fecha||!f.depId) return;
+      if(!f.tipo||!f.fecha||(f.tipo!=="entrada_almacen"&&f.tipo!=="etiquetado"&&!f.depId)) return;
 
       const litrosNuevos = parseFloat(f.litros||0);
 
@@ -889,12 +891,21 @@ export default function BodegaApp() {
       const litrosOrigenAntes = f.tipo==="trasiego"&&f.depId ? litrosActuales(f.depId, hoy()) : 0;
       // Guardar la etiqueta del origen EN la operacion de trasiego
       const etiquetaOrigen = f.tipo==="trasiego"&&f.depId ? etiquetaActual(f.depId) : null;
+      // Para entrada_granel, guardar el tipo de vino que el usuario indicó
+      const tipoVinoEntrada = f.tipo==="entrada_granel" ? {
+        tipoVinoOrigen: f.tipoVino?.toLowerCase()||"",
+        anadaOrigen: f.anada||"",
+        etiquetaOrigen: f.etiqueta||""
+      } : null;
 
       if(f._editandoId) {
         const {_editandoId, ...opSinId} = f;
         setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId}:o));
       } else {
-        const ops = [{...f, id:Date.now(), ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{})}];
+        const ops = [{...f, id:Date.now(), 
+          ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{}),
+          ...(tipoVinoEntrada||{})
+        }];
         if(f.tipo==="trasiego"&&f.depDestino2&&f.litros2) {
           ops.push({...f, id:Date.now()+1, depDestino:f.depDestino2, litros:f.litros2, depDestino2:undefined, litros2:undefined,
             ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{})});
@@ -1279,6 +1290,45 @@ export default function BodegaApp() {
             <input type="text" style={S.input} placeholder="ej. E2025-001" value={f.loteEtiqueta||""} onChange={e=>set("loteEtiqueta",e.target.value)}/>
           </>}
 
+          {/* Entrada directa almacen */}
+          {esEntradaAlmacen&&<>
+            <div style={{...S.card,background:"rgba(74,155,127,0.1)",borderColor:C.accent,fontSize:13,color:C.accent,marginBottom:10}}>
+              Botellas que entran directamente al almacen o botellero sin pasar por deposito
+            </div>
+            <label style={S.label}>Destino</label>
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              {[["almacen","Almacen (etiquetado)"],["botellero","Botellero (sin etiquetar)"]].map(([v,l])=>(
+                <button key={v} onClick={()=>set("destino",v)}
+                  style={{flex:1,padding:"8px",borderRadius:8,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
+                    border:"2px solid "+((f.destino||"almacen")===v?C.gold:C.border),
+                    background:(f.destino||"almacen")===v?"#1A2535":"transparent",
+                    color:(f.destino||"almacen")===v?C.gold:C.muted}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <label style={S.label}>Producto / Etiqueta</label>
+            <input type="text" style={S.input} placeholder="ej. Araico Blanco Barrica" value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}/>
+            <label style={S.label}>Anada</label>
+            <input type="text" style={S.input} placeholder="ej. 2024" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
+            <label style={S.label}>Formato</label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+              {[["botella","Botella 0,75L"],["bib5","BiB 5L"],["bib10","BiB 10L"],["bib15","BiB 15L"],["garrafa","Garrafa 20L"]].map(([v,l])=>(
+                <button key={v} onClick={()=>set("formato",v)}
+                  style={{padding:"6px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
+                    border:"2px solid "+((f.formato||"botella")===v?C.gold:C.border),
+                    background:(f.formato||"botella")===v?"#1A2535":"transparent",
+                    color:(f.formato||"botella")===v?C.gold:C.muted}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <label style={S.label}>Cantidad</label>
+            <input type="number" style={S.input} placeholder="0" value={f.botellas||""} onChange={e=>set("botellas",e.target.value)}/>
+            <label style={S.label}>Procedencia</label>
+            <input type="text" style={S.input} placeholder="ej. Compra, Devolucion..." value={f.origen||""} onChange={e=>set("origen",e.target.value)}/>
+          </>}
+
           {/* Etiquetado desde botellero */}
           {f.tipo==="etiquetado"&&<>
             <div style={{...S.card,background:"rgba(200,160,80,0.1)",borderColor:"#C8A050",fontSize:13,color:"#C8A050",marginBottom:10}}>
@@ -1574,7 +1624,7 @@ export default function BodegaApp() {
     });
 
     // Aplicar operaciones posteriores
-    operaciones.filter(o=>o.tipo==="embotellado"||o.tipo==="entrada_granel").forEach(op=>{
+    operaciones.filter(o=>o.tipo==="embotellado"||o.tipo==="entrada_granel"||o.tipo==="entrada_almacen").forEach(op=>{
       const k = (op.etiqueta||"Sin etiquetar")+" "+(op.anada||"");
       const esBotellero = (op.destino||"almacen")==="botellero";
       if(esBotellero){
