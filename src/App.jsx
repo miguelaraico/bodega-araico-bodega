@@ -1612,18 +1612,23 @@ export default function BodegaApp() {
           {recientes.map(op=>{
             const dep = todosContenedores.find(d=>d.id===op.depId);
             const t   = TIPOS_OP.find(x=>x.id===op.tipo);
-            const col = ["vendimia","llenado"].includes(op.tipo)?C.accent:["embotellado","salida_granel"].includes(op.tipo)?C.danger:C.gold;
+            const col = ["vendimia","llenado","entrada_granel","entrada_almacen"].includes(op.tipo)?C.accent:["embotellado","salida_granel"].includes(op.tipo)?C.danger:C.gold;
             return (
               <div key={op.id} style={{...S.card,borderLeft:"3px solid "+col,marginBottom:6,padding:"10px 12px",cursor:"pointer"}}
-                onClick={()=>{setSelId(op.depId);setVista("ficha");}}>
+                onClick={()=>{
+                  if(op.depId) { setSelId(op.depId); setVista("ficha"); }
+                  else { setSelOp(op); }
+                }}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                   <div>
                     <span style={{fontSize:12,fontWeight:700,color:col}}>{t?.label||op.tipo}</span>
-                    <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{dep?.nombre||op.depId}</span>
+                    <span style={{fontSize:11,color:C.muted,marginLeft:8}}>{dep?.nombre||op.depId||"Sin deposito"}</span>
                   </div>
                   <span style={{fontSize:11,color:C.muted}}>{fmtF(op.fecha)}</span>
                 </div>
                 {op.litros&&<div style={{fontSize:13}}>{fmtL(op.litros)}{op.kg?" / "+fmtK(op.kg):""}</div>}
+                {op.botellas&&!op.litros&&<div style={{fontSize:13}}>{op.botellas} unidades</div>}
+                {op.etiqueta&&<div style={{fontSize:12,color:C.gold}}>{op.etiqueta}{op.anada?" "+op.anada:""}</div>}
                 {op.variedad&&<div style={{fontSize:12,color:C.muted}}>{op.variedad}{op.campana?" "+op.campana:""}</div>}
                 {op.notas&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>{op.notas}</div>}
               </div>
@@ -1631,11 +1636,47 @@ export default function BodegaApp() {
           })}
         </div>
         <TabBar tab={tab} setTab={setTab}/>
+
+        {/* Modal detalle operacion sin deposito */}
+        {selOp&&tab==="ops"&&(()=>{
+          const t = TIPOS_OP.find(x=>x.id===selOp.tipo);
+          const col = C.gold;
+          return (
+            <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:50,
+              display:"flex",alignItems:"flex-end",justifyContent:"center"}}
+              onClick={e=>{if(e.target===e.currentTarget)setSelOp(null);}}>
+              <div style={{...S.card,width:"100%",maxWidth:480,maxHeight:"80vh",overflowY:"auto",
+                borderRadius:"16px 16px 0 0",borderBottom:"none",paddingBottom:32}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:15,fontWeight:700,color:col}}>{t?.label||selOp.tipo}</div>
+                    <div style={{fontSize:12,color:C.muted}}>{fmtF(selOp.fecha)}</div>
+                  </div>
+                  <button onClick={()=>setSelOp(null)}
+                    style={{background:"none",border:"none",color:C.muted,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
+                </div>
+                {selOp.etiqueta&&<div style={S.row}><span style={{color:C.muted}}>Producto</span><span style={{fontWeight:700,color:C.gold}}>{selOp.etiqueta}</span></div>}
+                {selOp.anada&&<div style={S.row}><span style={{color:C.muted}}>Anada</span><span>{selOp.anada}</span></div>}
+                {selOp.botellas&&<div style={S.row}><span style={{color:C.muted}}>Cantidad</span><span style={{fontWeight:700}}>{selOp.botellas} unidades</span></div>}
+                {selOp.destino&&<div style={S.row}><span style={{color:C.muted}}>Destino</span><span>{selOp.destino==="almacen"?"Almacen":"Botellero"}</span></div>}
+                {selOp.origen&&<div style={S.row}><span style={{color:C.muted}}>Procedencia</span><span>{selOp.origen}</span></div>}
+                {selOp.notas&&<div style={{marginTop:10,fontSize:12,color:C.muted,fontStyle:"italic"}}>{selOp.notas}</div>}
+                <div style={{marginTop:16}}>
+                  <Btn variant="danger" small onClick={()=>{
+                    if(window.confirm("¿Borrar esta operacion?")) {
+                      setOperaciones(prev=>prev.filter(o=>o.id!==selOp.id));
+                      setSelOp(null);
+                    }
+                  }}>Borrar operacion</Btn>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
 
-  // ── TAB STOCK ─────────────────────────────────────────────────────────────
   if(tab==="stock") {
     // Partir de las existencias iniciales
     const almacen   = {};
@@ -2049,3 +2090,4 @@ export default function BodegaApp() {
 
   return null;
 }
+
