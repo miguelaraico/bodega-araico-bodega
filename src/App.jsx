@@ -1717,7 +1717,7 @@ export default function BodegaApp() {
     });
 
     // Descontar ventas de la app de ventas (solo desde 01/08/2026 en adelante)
-    ventas.filter(v=>v.fecha>="2026-08-01").forEach(v=>{
+    ventas.filter(v=>v.fecha>="2026-08-02").forEach(v=>{
       (v.lineas||[]).forEach(l=>{
         const etiqueta = MAPA_PRODUCTOS[l.productoId];
         if(!etiqueta) return;
@@ -1738,7 +1738,7 @@ export default function BodegaApp() {
 
     const totalBotellero = Object.values(botellero).reduce((s,v)=>s+Math.max(0,v.botellas),0);
     const totalAlmacen   = Object.values(almacen).reduce((s,v)=>s+Math.max(0,v.botellas),0);
-    const sinStock       = Object.values(almacen).filter(v=>v.botellas<=0);
+    const sinStock       = Object.values(almacen).filter(v=>v.botellas<0);
     const graneles = operaciones.filter(o=>o.tipo==="salida_granel");
 
     const abrirEtiquetado = (k, datos) => {
