@@ -1716,17 +1716,24 @@ export default function BodegaApp() {
       almacen[k].botellas += parseFloat(op.botellas||0);
     });
 
-    // Descontar ventas de la app de ventas (solo desde 01/08/2026 en adelante)
+    // Descontar ventas de la app de ventas (solo desde 02/08/2026 en adelante)
     ventas.filter(v=>v.fecha>="2026-08-02").forEach(v=>{
       (v.lineas||[]).forEach(l=>{
         const etiqueta = MAPA_PRODUCTOS[l.productoId];
         if(!etiqueta) return;
-        const k = etiqueta+" ";
-        // Buscar en almacen
+        const unidades = parseFloat(l.botellas||l.cantUnidades||0);
+        if(!unidades) return;
+        // Buscar en almacen por nombre exacto del producto (ignorando añada)
         const keys = Object.keys(almacen);
-        const match = keys.find(k2=>k2.startsWith(etiqueta));
-        if(match) {
-          almacen[match].botellas -= parseFloat(l.botellas||l.cantUnidades||0);
+        // Primero buscar coincidencia exacta con el nombre del producto
+        const matchExacto = keys.find(k=>almacen[k].etiqueta===etiqueta);
+        if(matchExacto) {
+          almacen[matchExacto].botellas -= unidades;
+        } else {
+          // Si no existe, crear entrada en negativo para avisar
+          const k = etiqueta+" ";
+          if(!almacen[k]) almacen[k]={botellas:0,etiqueta,anada:"",lotes:[]};
+          almacen[k].botellas -= unidades;
         }
       });
     });
@@ -1738,7 +1745,7 @@ export default function BodegaApp() {
 
     const totalBotellero = Object.values(botellero).reduce((s,v)=>s+Math.max(0,v.botellas),0);
     const totalAlmacen   = Object.values(almacen).reduce((s,v)=>s+Math.max(0,v.botellas),0);
-    const sinStock       = Object.values(almacen).filter(v=>v.botellas<0);
+    const sinStock       = Object.values(almacen).filter(v=>v.botellas<0&&v.etiqueta!=="Sin etiquetar");
     const graneles = operaciones.filter(o=>o.tipo==="salida_granel");
 
     const abrirEtiquetado = (k, datos) => {
