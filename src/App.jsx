@@ -262,14 +262,17 @@ const Tanque = ({dep, litros, resaltado=true, onClick}) => {
   const colores = (info.tipo && COLOR_TIPO[info.tipo]) ? COLOR_TIPO[info.tipo] : COLOR_TIPO.vacio;
   const pct     = dep.capacidad>0 ? Math.min(100, Math.round((litros/dep.capacidad)*100)) : 0;
   const nivel   = dep.siempreLleno ? 100 : pct;
-  const tieneContenido = nivel>0;
+  const tieneContenido = nivel>0 || (info.tipo && info.tipo!=="");
   const tanqueH = 72, tanqueW = 52;
   const opacidad = resaltado ? 1 : 0.3;
 
   // Texto dentro del tanque: mostrar litros
+  // Calcular kg totales de vendimia sin prensar en este deposito
+  const kgVendimia = dep._kgVendimia || 0;
+
   const litrosTxt = dep.siempreLleno
     ? fmtL(dep.capacidad)
-    : tieneContenido ? fmtL(litros) : "Vacio";
+    : nivel>0 ? fmtL(litros) : (kgVendimia>0 ? fmtK(kgVendimia)+" kg" : (info.tipo ? "Uva" : "Vacio"));
   const fontSize = litros>=10000?8:litros>=1000?9:10;
 
   return (
@@ -1602,8 +1605,12 @@ export default function BodegaApp() {
           <div style={{display:"flex",flexWrap:"wrap",justifyContent:"flex-start"}}>
             {deps.map(dep=>{
               const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
-              const infoEtiqueta = litros>0 ? etiquetaActual(dep.id) : {tipoVino:"",anada:"",etiqueta:""};
-              const depConEtiqueta = {...dep, ...infoEtiqueta};
+              const infoEtiqueta = etiquetaActual(dep.id);
+              // Calcular kg de vendimia sin prensar (solo si no hay litros)
+              const kgVendimia = litros===0 ? operaciones
+                .filter(o=>o.depId===dep.id&&o.tipo==="vendimia"&&o.fecha<=fechaConsulta)
+                .reduce((s,o)=>s+parseFloat(o.kg||0),0) : 0;
+              const depConEtiqueta = {...dep, ...infoEtiqueta, _kgVendimia:kgVendimia};
               const matchTipo  = filtroTipo==="todos"  || (depConEtiqueta.tipoVino||"")=== filtroTipo;
               const matchAnada = filtroAnada==="todas" || (depConEtiqueta.anada||"")=== filtroAnada;
               const resaltado  = (filtroTipo==="todos" && filtroAnada==="todas") ? true : matchTipo && matchAnada;
