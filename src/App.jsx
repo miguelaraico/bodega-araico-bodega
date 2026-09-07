@@ -410,9 +410,12 @@ export default function BodegaApp() {
     operaciones.filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
       .sort((a,b)=>a.fecha.localeCompare(b.fecha))
       .forEach(op=>{
-        if(["vendimia","llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) {
-          if(op.litros) l+=parseFloat(op.litros);
-          else if(op.kg) l+=parseFloat(op.kg)*0.7; // rendimiento aproximado 70%
+        if(["llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) {
+          l+=parseFloat(op.litros||0);
+        }
+        if(op.tipo==="vendimia"&&op.depId===id) {
+          // La vendimia registra kilos pero NO añade litros - los litros vienen del prensado
+          // No hacer nada aqui
         }
         if(op.tipo==="trasiego"&&op.depDestino===id)                          l+=parseFloat(op.litros||0);
         if(op.tipo==="trasiego"&&op.depDestino2===id)                         l+=parseFloat(op.litros2||0);
@@ -916,7 +919,16 @@ export default function BodegaApp() {
       }
 
       // Si es edicion, reemplazar la operacion existente; si no, añadir nueva
-      // Prensado: añadir litros al deposito destino y acumular orujos
+      // Vendimia: asignar tipo de vino al deposito con etiqueta provisional "Tipo Campaña"
+      if(f.tipo==="vendimia"&&f.depId&&f.tipoVino) {
+        const tipoLabel = f.tipoVino.charAt(0).toUpperCase()+f.tipoVino.slice(1);
+        const etiqProvisional = tipoLabel+(f.campana?" "+f.campana:"");
+        setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,
+          tipoVino: f.tipoVino.toLowerCase(),
+          anada:    f.campana||d.anada||"",
+          etiqueta: etiqProvisional,
+        }:d));
+      }
       if(f.tipo==="prensado"&&f.depDestino&&f.litros) {
         const depOrigen = depositos.find(d=>d.id===f.depId);
         // Crear operacion de llenado en el deposito destino
@@ -945,6 +957,12 @@ export default function BodegaApp() {
         anadaOrigen: f.anada||"",
         etiquetaOrigen: f.etiqueta||""
       } : null;
+      // Para vendimia, guardar el tipo de vino indicado con etiqueta provisional
+      const tipoVinoVendimia = f.tipo==="vendimia" ? {
+        tipoVinoOrigen: f.tipoVino?.toLowerCase()||"",
+        anadaOrigen: f.campana||"",
+        etiquetaOrigen: (f.tipoVino?f.tipoVino.charAt(0).toUpperCase()+f.tipoVino.slice(1):"")+(f.campana?" "+f.campana:"")
+      } : null;
 
       if(f._editandoId) {
         const {_editandoId, ...opSinId} = f;
@@ -952,7 +970,8 @@ export default function BodegaApp() {
       } else {
         const ops = [{...f, id:Date.now(), 
           ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{}),
-          ...(tipoVinoEntrada||{})
+          ...(tipoVinoEntrada||{}),
+          ...(tipoVinoVendimia||{})
         }];
         if(f.tipo==="trasiego"&&f.depDestino2&&f.litros2) {
           ops.push({...f, id:Date.now()+1, depDestino:f.depDestino2, litros:f.litros2, depDestino2:undefined, litros2:undefined,
@@ -1137,6 +1156,18 @@ export default function BodegaApp() {
           {esVendimia&&<>
             <label style={S.label}>Campana</label>
             <input type="text" style={S.input} placeholder="2025" value={f.campana||""} onChange={e=>set("campana",e.target.value)}/>
+            <label style={S.label}>Tipo de vino</label>
+            <div style={{display:"flex",gap:6,marginBottom:10}}>
+              {[["tinto","Tinto"],["blanco","Blanco"],["rosado","Rosado"],["mosto","Mosto"]].map(([v,l])=>(
+                <button key={v} onClick={()=>set("tipoVino",v)}
+                  style={{flex:1,padding:"7px",borderRadius:8,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
+                    border:"2px solid "+((f.tipoVino)===v?C.gold:C.border),
+                    background:(f.tipoVino)===v?"#1A2535":"transparent",
+                    color:(f.tipoVino)===v?C.gold:C.muted}}>
+                  {l}
+                </button>
+              ))}
+            </div>
             <label style={S.label}>Variedad</label>
             <select style={S.input} value={f.variedad||""} onChange={e=>set("variedad",e.target.value)}>
               <option value="">-- Variedad --</option>
@@ -1144,9 +1175,12 @@ export default function BodegaApp() {
             </select>
             <label style={S.label}>Kilos de uva</label>
             <input type="number" style={S.input} placeholder="0" value={f.kg||""} onChange={e=>set("kg",e.target.value)}/>
-            <label style={S.label}>Grado alcoholico</label>
+            {f.kg&&<div style={{fontSize:12,color:C.muted,marginTop:-6,marginBottom:8}}>
+              Referencia: ≈ {Math.round(parseFloat(f.kg)*0.7).toLocaleString("es-ES")} L estimados (70%)
+            </div>}
+            <label style={S.label}>Grado alcoholico estimado</label>
             <input type="number" step="0.1" style={S.input} placeholder="13.5" value={f.grado||""} onChange={e=>set("grado",e.target.value)}/>
-            <label style={S.label}>Origen (viticultor)</label>
+            <label style={S.label}>Origen (viticultor / finca)</label>
             <input type="text" style={S.input} placeholder="Nombre del viticultor" value={f.origen||""} onChange={e=>set("origen",e.target.value)}/>
           </>}
 
