@@ -78,6 +78,7 @@ const cargarBodega = async () => {
       materiales:  map.materiales  ? JSON.parse(map.materiales)  : null,
       stock:       map.stock       ? JSON.parse(map.stock)       : null,
       productos:   map.productos   ? JSON.parse(map.productos)   : null,
+      orujos:      map.orujos      ? parseFloat(map.orujos)      : 0,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null}; }
 };
@@ -110,7 +111,7 @@ const MAPA_PRODUCTOS = {
   "cerveza_negra":  "Cerveza Negra",
 };
 
-const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods) => {
+const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj) => {
   try {
     await supaFetch("POST","bodega_datos",[
       {bodega_id:BODEGA_ID,clave:"depositos",   valor:JSON.stringify(dep)},
@@ -120,6 +121,7 @@ const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods) => {
       {bodega_id:BODEGA_ID,clave:"materiales",  valor:JSON.stringify(mat)},
       {bodega_id:BODEGA_ID,clave:"stock",       valor:JSON.stringify(stk)},
       {bodega_id:BODEGA_ID,clave:"productos",   valor:JSON.stringify(prods)},
+      {bodega_id:BODEGA_ID,clave:"orujos",      valor:String(oruj)},
     ]);
   } catch(e){ console.error(e); }
 };
@@ -170,6 +172,7 @@ const BARRICAS_DEFAULT = [
 
 const TIPOS_OP = [
   {id:"vendimia",        label:"Entrada vendimia"},
+  {id:"prensado",        label:"Prensado"},
   {id:"fermentacion",    label:"Fermentacion"},
   {id:"entrada_granel",  label:"Entrada granel"},
   {id:"entrada_almacen", label:"Entrada directa almacen"},
@@ -337,6 +340,7 @@ export default function BodegaApp() {
   const [formCerveza,  setFormCerveza]  = useState(null);
   const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
   const [ventas,       setVentas]       = useState([]);
+  const [orujos,       setOrujos]       = useState(0); // kg totales acumulados
   const [materiales,   setMateriales]   = useState({
     botellas: [
       {id:"bj",  nombre:"Bordelesa Joven",    stock:0, lotes:[]},
@@ -373,7 +377,7 @@ export default function BodegaApp() {
   const saveRef = useRef(null);
 
   useEffect(()=>{
-    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk,productos:prods})=>{
+    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk,productos:prods,orujos:oruj})=>{
       if(d)     setDepositos(d);         else setDepositos(DEPOSITOS_DEFAULT);
       if(b)     setBarricas(b);          else setBarricas(BARRICAS_DEFAULT);
       if(o)     setOperaciones(o);       else setOperaciones([]);
@@ -381,6 +385,7 @@ export default function BodegaApp() {
       if(mat)   setMateriales(mat);
       if(stk)   setStockInicial(stk);
       if(prods) setProductos(prods);
+      if(oruj)  setOrujos(oruj);
       setCargando(false);
     });
     // Cargar ventas de la app principal
@@ -392,10 +397,10 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos]);
+  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos]);
 
   const litrosActuales = (id, hastaFecha) => {
     const contenedor = [...depositos,...barricas].find(d=>d.id===id);
@@ -404,7 +409,10 @@ export default function BodegaApp() {
     operaciones.filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
       .sort((a,b)=>a.fecha.localeCompare(b.fecha))
       .forEach(op=>{
-        if(["vendimia","llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) l+=parseFloat(op.litros||0);
+        if(["vendimia","llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) {
+          if(op.litros) l+=parseFloat(op.litros);
+          else if(op.kg) l+=parseFloat(op.kg)*0.7; // rendimiento aproximado 70%
+        }
         if(op.tipo==="trasiego"&&op.depDestino===id)                          l+=parseFloat(op.litros||0);
         if(op.tipo==="trasiego"&&op.depDestino2===id)                         l+=parseFloat(op.litros2||0);
         if(op.tipo==="trasiego"&&op.depId===id)                               l-=parseFloat(op.litros||0)+(parseFloat(op.litros2||0));
@@ -678,7 +686,7 @@ export default function BodegaApp() {
             </div>
           </div>
           <Btn variant="gold" small onClick={()=>{
-            setFormOp({depId:dep.id,fecha:hoy(),tipo:"",litros:"",notas:""});
+            setFormOp({depId:dep.id,fecha:fechaConsulta!==hoy()?fechaConsulta:hoy(),tipo:"",litros:"",notas:""});
             setVista("nueva_op");
           }}>+ Op.</Btn>
         </div>
@@ -858,9 +866,10 @@ export default function BodegaApp() {
   if(vista==="nueva_op") {
     const f = formOp;
     const set = (k,v) => setFormOp(p=>({...p,[k]:v}));
-    const esVendimia     = f.tipo==="vendimia";
-    const esFermentacion = f.tipo==="fermentacion";
-    const esEntradaGran  = f.tipo==="entrada_granel";
+    const esVendimia      = f.tipo==="vendimia";
+    const esPrensado      = f.tipo==="prensado";
+    const esFermentacion  = f.tipo==="fermentacion";
+    const esEntradaGran   = f.tipo==="entrada_granel";
     const esEntradaAlmacen = f.tipo==="entrada_almacen";
     const esTrasiego    = f.tipo==="trasiego";
     const esTrat     = ["sulfitado","clarificacion","filtracion","acidez","azucar"].includes(f.tipo);
@@ -870,7 +879,7 @@ export default function BodegaApp() {
     const conLitros  = ["vendimia","llenado","trasiego","embotellado","salida_granel","entrada_granel"].includes(f.tipo);
 
     const guardar = () => {
-      if(!f.tipo||!f.fecha||(f.tipo!=="entrada_almacen"&&f.tipo!=="etiquetado"&&!f.depId)) return;
+      if(!f.tipo||!f.fecha||(f.tipo!=="entrada_almacen"&&f.tipo!=="etiquetado"&&f.tipo!=="prensado"&&!f.depId)) return;
 
       const litrosNuevos = parseFloat(f.litros||0);
 
@@ -906,6 +915,25 @@ export default function BodegaApp() {
       }
 
       // Si es edicion, reemplazar la operacion existente; si no, añadir nueva
+      // Prensado: añadir litros al deposito destino y acumular orujos
+      if(f.tipo==="prensado"&&f.depDestino&&f.litros) {
+        const depOrigen = depositos.find(d=>d.id===f.depId);
+        // Crear operacion de llenado en el deposito destino
+        const opLlenado = {
+          ...f,
+          id: Date.now()+1,
+          tipo: "llenado",
+          depId: f.depDestino,
+          tipoVinoOrigen: f.tipoVino||depOrigen?.tipoVino||"",
+          anadaOrigen: f.anada||depOrigen?.anada||"",
+          etiquetaOrigen: f.etiqueta||depOrigen?.etiqueta||"",
+          notas: (f.notas||"")+" [Prensado desde "+(f.depId||"prensa")+"]",
+        };
+        setOperaciones(prev=>[opLlenado,...prev]);
+        // Acumular orujos
+        if(f.orujoKg) setOrujos(prev=>prev+parseFloat(f.orujoKg));
+      }
+
       // Calcular litros ANTES de añadir la operacion
       const litrosOrigenAntes = f.tipo==="trasiego"&&f.depId ? litrosActuales(f.depId, hoy()) : 0;
       // Guardar la etiqueta del origen EN la operacion de trasiego
@@ -1061,6 +1089,47 @@ export default function BodegaApp() {
                 <input type="number" step="0.1" style={S.input} placeholder="ej. 22.5" value={f.temperatura||""} onChange={e=>set("temperatura",e.target.value)}/>
               </div>
             </div>
+          </>}
+
+          {/* Prensado */}
+          {esPrensado&&<>
+            <div style={{...S.card,background:"rgba(200,169,110,0.08)",borderColor:C.gold,fontSize:13,color:C.muted,marginBottom:10}}>
+              Registra los litros de mosto obtenidos y los kg de orujo generados
+            </div>
+            <label style={S.label}>Deposito destino (fermentacion)</label>
+            <select style={S.input} value={f.depDestino||""} onChange={e=>set("depDestino",e.target.value)}>
+              <option value="">-- Selecciona deposito --</option>
+              {depositos.filter(d=>d.activo).map(d=><option key={d.id} value={d.id}>{d.nombre}{d.tipoVino?" - "+d.tipoVino+" "+d.anada:""}</option>)}
+            </select>
+            <label style={S.label}>Litros de mosto obtenidos</label>
+            <input type="number" style={S.input} placeholder="0" value={f.litros||""} onChange={e=>set("litros",e.target.value)}/>
+            {f.depDestino&&f.litros&&(()=>{
+              const dep = depositos.find(d=>d.id===f.depDestino);
+              const disp = dep?.capacidad>0 ? dep.capacidad - litrosActuales(f.depDestino) : null;
+              return disp!==null ? <div style={{fontSize:12,color:disp>=parseFloat(f.litros)?C.accent:C.danger,marginTop:-6,marginBottom:8}}>
+                Capacidad disponible en {dep.nombre}: {fmtL(disp)}
+              </div> : null;
+            })()}
+            <label style={S.label}>Kg de orujo generados</label>
+            <input type="number" style={S.input} placeholder="0" value={f.orujoKg||""} onChange={e=>set("orujoKg",e.target.value)}/>
+            {f.orujoKg&&<div style={{fontSize:12,color:C.gold,marginTop:-6,marginBottom:8}}>
+              Total orujo acumulado: {fmtK(orujos + parseFloat(f.orujoKg||0))} kg
+            </div>}
+            <label style={S.label}>Tipo de vino</label>
+            <select style={S.input} value={f.tipoVino||""} onChange={e=>set("tipoVino",e.target.value)}>
+              <option value="">-- Selecciona --</option>
+              <option value="tinto">Tinto</option>
+              <option value="blanco">Blanco</option>
+              <option value="rosado">Rosado</option>
+              <option value="mosto">Mosto</option>
+            </select>
+            <label style={S.label}>Anada</label>
+            <input type="text" style={S.input} placeholder="ej. 2025" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
+            <label style={S.label}>Etiqueta / Producto</label>
+            <select style={S.input} value={f.etiqueta||""} onChange={e=>set("etiqueta",e.target.value)}>
+              <option value="">-- Selecciona producto --</option>
+              {productos.filter(p=>p.activo).map(p=><option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+            </select>
           </>}
 
           {/* Vendimia */}
@@ -1412,11 +1481,20 @@ export default function BodegaApp() {
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <Btn variant="ghost" small onClick={()=>setVista("importar_analisis")}>PDF Lab.</Btn>
-            <Btn variant="gold" small onClick={()=>{setFormOp({fecha:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>
+            <Btn variant="gold" small onClick={()=>{setFormOp({fecha:fechaConsulta!==hoy()?fechaConsulta:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>
               + Operacion
             </Btn>
           </div>
         </div>
+        {/* Contador orujos */}
+        {orujos>0&&(
+          <div style={{background:"#1A1A0A",borderBottom:"1px solid #5A4A1A",padding:"8px 16px",
+            display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:12,color:"#A0862A"}}>🫙 Orujo acumulado</div>
+            <div style={{fontSize:16,fontWeight:700,color:"#C8A050"}}>{orujos.toLocaleString("es-ES")} kg</div>
+          </div>
+        )}
+
         {/* Selector fecha consulta */}
         <div style={{background:"#0A1520",borderBottom:"1px solid "+C.border,padding:"8px 16px",display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:12,color:C.muted,flexShrink:0}}>Ver bodega al:</span>
@@ -1535,7 +1613,7 @@ export default function BodegaApp() {
       <div style={{...S.app,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
         <div style={S.header}>
           <div><div style={S.htitle}>Barricas</div><div style={S.hsub}>{barricasActivas.length} barricas - {fmtL(totalLitros)}</div></div>
-          <Btn variant="gold" small onClick={()=>{setFormOp({fecha:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>+ Op.</Btn>
+          <Btn variant="gold" small onClick={()=>{setFormOp({fecha:fechaConsulta!==hoy()?fechaConsulta:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>+ Op.</Btn>
         </div>
         <div style={{...S.body,flex:1}}>
 
@@ -1601,7 +1679,7 @@ export default function BodegaApp() {
       <div style={{...S.app,display:"flex",flexDirection:"column",minHeight:"100vh"}}>
         <div style={S.header}>
           <div><div style={S.htitle}>Operaciones</div><div style={S.hsub}>{operaciones.length} registradas</div></div>
-          <Btn variant="gold" small onClick={()=>{setFormOp({fecha:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>+ Op.</Btn>
+          <Btn variant="gold" small onClick={()=>{setFormOp({fecha:fechaConsulta!==hoy()?fechaConsulta:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>+ Op.</Btn>
         </div>
         <div style={{...S.body,flex:1}}>
           {operaciones.length===0&&(
