@@ -262,7 +262,7 @@ const Tanque = ({dep, litros, resaltado=true, onClick}) => {
   const colores = (info.tipo && COLOR_TIPO[info.tipo]) ? COLOR_TIPO[info.tipo] : COLOR_TIPO.vacio;
   const pct     = dep.capacidad>0 ? Math.min(100, Math.round((litros/dep.capacidad)*100)) : 0;
   const nivel   = dep.siempreLleno ? 100 : pct;
-  const tieneContenido = nivel>0 || (info.tipo && info.tipo!=="");
+  const tieneContenido = nivel>0 || (info.tipo && info.tipo!==""&&kgVendimia>0);
   const tanqueH = 72, tanqueW = 52;
   const opacidad = resaltado ? 1 : 0.3;
 
@@ -272,7 +272,7 @@ const Tanque = ({dep, litros, resaltado=true, onClick}) => {
 
   const litrosTxt = dep.siempreLleno
     ? fmtL(dep.capacidad)
-    : nivel>0 ? fmtL(litros) : (kgVendimia>0 ? fmtK(kgVendimia)+" kg" : (info.tipo ? "Uva" : "Vacio"));
+    : nivel>0 ? fmtL(litros) : (kgVendimia>0 ? kgVendimia.toLocaleString("es-ES")+" kg" : (info.tipo ? "Uva" : "Vacio"));
   const fontSize = litros>=10000?8:litros>=1000?9:10;
 
   return (
@@ -1606,8 +1606,9 @@ export default function BodegaApp() {
             {deps.map(dep=>{
               const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
               const infoEtiqueta = etiquetaActual(dep.id);
-              // Calcular kg de vendimia sin prensar (solo si no hay litros)
-              const kgVendimia = litros===0 ? operaciones
+              // Calcular kg de vendimia sin prensar (solo si no hay litros Y solo hay vendimias, no llenados)
+              const tieneOperLlenado = operaciones.some(o=>o.depId===dep.id&&["llenado","trasiego"].includes(o.tipo)&&o.fecha<=fechaConsulta);
+              const kgVendimia = litros===0 && !tieneOperLlenado ? operaciones
                 .filter(o=>o.depId===dep.id&&o.tipo==="vendimia"&&o.fecha<=fechaConsulta)
                 .reduce((s,o)=>s+parseFloat(o.kg||0),0) : 0;
               const depConEtiqueta = {...dep, ...infoEtiqueta, _kgVendimia:kgVendimia};
