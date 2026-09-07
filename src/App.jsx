@@ -262,7 +262,7 @@ const Tanque = ({dep, litros, resaltado=true, onClick}) => {
   const colores = (info.tipo && COLOR_TIPO[info.tipo]) ? COLOR_TIPO[info.tipo] : COLOR_TIPO.vacio;
   const pct     = dep.capacidad>0 ? Math.min(100, Math.round((litros/dep.capacidad)*100)) : 0;
   const nivel   = dep.siempreLleno ? 100 : pct;
-  const tieneContenido = nivel>0 || (info.tipo && info.tipo!==""&&kgVendimia>0);
+  const tieneContenido = nivel>0 || (info.tipo && info.tipo!==""&&dep._kgVendimia>0);
   const tanqueH = 72, tanqueW = 52;
   const opacidad = resaltado ? 1 : 0.3;
 
