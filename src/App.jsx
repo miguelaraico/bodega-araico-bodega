@@ -360,6 +360,7 @@ export default function BodegaApp() {
     {id:"araico_crianza", nombre:"Araico Crianza",        activo:true},
     {id:"blanco_barrica", nombre:"Araico Blanco Barrica", activo:true},
     {id:"orgullo",        nombre:"Orgullo",               activo:true},
+    {id:"espumoso",       nombre:"Espumoso",              activo:true},
     {id:"cuartillo",      nombre:"Cuartillo",             activo:true},
     {id:"reserva",        nombre:"Reserva",               activo:true},
     {id:"bib_5l",         nombre:"BiB 5L",                activo:true},
@@ -1760,26 +1761,28 @@ export default function BodegaApp() {
     const almacen   = {};
     const botellero = {};
 
-    // Cargar existencias iniciales
+    // Cargar existencias iniciales — clave solo por etiqueta (sin añada)
     (stockInicial.almacen||[]).forEach(item=>{
-      const k = (item.etiqueta||"")+" "+(item.anada||"");
-      almacen[k] = {botellas:item.botellas, etiqueta:item.etiqueta, anada:item.anada||"", lotes:item.lotes||[]};
+      const k = item.etiqueta||"";
+      if(!almacen[k]) almacen[k]={botellas:0,etiqueta:item.etiqueta||"",lotes:[]};
+      almacen[k].botellas += item.botellas||0;
     });
     (stockInicial.botellero||[]).forEach(item=>{
-      const k = (item.etiqueta||"")+" "+(item.anada||"");
-      botellero[k] = {botellas:item.botellas, etiqueta:item.etiqueta, anada:item.anada||"", lotes:item.lotes||[]};
+      const k = item.etiqueta||"";
+      if(!botellero[k]) botellero[k]={botellas:0,etiqueta:item.etiqueta||"",lotes:[]};
+      botellero[k].botellas += item.botellas||0;
     });
 
-    // Aplicar operaciones posteriores
+    // Aplicar operaciones — clave solo por etiqueta
     operaciones.filter(o=>o.tipo==="embotellado"||o.tipo==="entrada_granel"||o.tipo==="entrada_almacen").forEach(op=>{
-      const k = (op.etiqueta||"Sin etiquetar")+" "+(op.anada||"");
+      const k = op.etiqueta||"Sin etiquetar";
       const esBotellero = (op.destino||"almacen")==="botellero";
       if(esBotellero){
-        if(!botellero[k]) botellero[k]={botellas:0,etiqueta:op.etiqueta||"Sin etiquetar",anada:op.anada||"",lotes:[]};
+        if(!botellero[k]) botellero[k]={botellas:0,etiqueta:k,lotes:[]};
         botellero[k].botellas += parseFloat(op.botellas||0);
         if(op.loteBotellas) botellero[k].lotes.push(op.loteBotellas);
       } else {
-        if(!almacen[k]) almacen[k]={botellas:0,etiqueta:op.etiqueta||"Sin etiquetar",anada:op.anada||"",lotes:[]};
+        if(!almacen[k]) almacen[k]={botellas:0,etiqueta:k,lotes:[]};
         almacen[k].botellas += parseFloat(op.botellas||0);
         if(op.loteBotellas) almacen[k].lotes.push(op.loteBotellas);
       }
@@ -1787,10 +1790,10 @@ export default function BodegaApp() {
 
     // Etiquetados desde botellero pasan a almacen
     operaciones.filter(o=>o.tipo==="etiquetado").forEach(op=>{
-      const k    = (op.etiqueta||"")+" "+(op.anada||"");
-      const kOrig= (op.etiquetaOrig||op.etiqueta||"")+" "+(op.anada||"");
+      const k     = op.etiqueta||"";
+      const kOrig = op.etiquetaOrig||op.etiqueta||"";
       if(botellero[kOrig]) botellero[kOrig].botellas -= parseFloat(op.botellas||0);
-      if(!almacen[k]) almacen[k]={botellas:0,etiqueta:op.etiqueta||"",anada:op.anada||"",lotes:[]};
+      if(!almacen[k]) almacen[k]={botellas:0,etiqueta:k,lotes:[]};
       almacen[k].botellas += parseFloat(op.botellas||0);
     });
 
@@ -1897,7 +1900,6 @@ export default function BodegaApp() {
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
                     <div style={{fontSize:14,fontWeight:700,color:d.botellas<0?C.danger:C.accent}}>{d.etiqueta}</div>
-                    {d.anada&&<div style={{fontSize:12,color:C.muted}}>Anada {d.anada}</div>}
                     {d.lotes.length>0&&<div style={{fontSize:11,color:C.muted}}>Lote: {d.lotes.join(", ")}</div>}
                   </div>
                   <div style={{textAlign:"right"}}>
