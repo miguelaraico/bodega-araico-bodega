@@ -994,7 +994,7 @@ export default function BodegaApp() {
                     </div>
                     <div style={{fontSize:12,color:C.muted,marginTop:2}}>
                       {(op.dosisTeorica||op.dosisReal) ? "Teorica: "+(op.dosisTeorica||"-")+"   ·   Real: "+(op.dosisReal||"-") : (op.dosis||"")}
-                      {(()=>{const c=op.cantidadReal?{cantidad:parseFloat(op.cantidadReal),unidad:op.unidadReal||"g",estimado:false}:calcularCantidad(op.dosisReal||op.dosisTeorica||op.dosis,litros); return c?<span style={{color:C.gold}}> · Total: {fmtCantidad(c)}</span>:null;})()}
+                      {(()=>{const c=op.cantidadReal?{cantidad:parseFloat(op.cantidadReal),unidad:op.unidadReal||"g",estimado:false}:calcularCantidad(op.dosisReal||op.dosisTeorica||op.dosis,litros); return c?<span style={{color:C.gold}}> · Añadido esta vez: {fmtCantidad(c)}</span>:null;})()}
                     </div>
                   </div>
                 ))}
@@ -1103,7 +1103,7 @@ export default function BodegaApp() {
                 {selOp.dosisTeorica&&<div style={S.row}><span style={{color:C.muted}}>Dosis teorica</span><span>{selOp.dosisTeorica}</span></div>}
                 {selOp.dosisReal&&<div style={S.row}><span style={{color:C.muted}}>Dosis real</span><span style={{fontWeight:700,color:C.accent}}>{selOp.dosisReal}</span></div>}
                 {!selOp.dosisTeorica&&!selOp.dosisReal&&selOp.dosis&&<div style={S.row}><span style={{color:C.muted}}>Dosis</span><span>{selOp.dosis}</span></div>}
-                {selOp.depId&&(()=>{const c=selOp.cantidadReal?{cantidad:parseFloat(selOp.cantidadReal),unidad:selOp.unidadReal||"g",estimado:false}:calcularCantidad(selOp.dosisReal||selOp.dosisTeorica||selOp.dosis, litrosActuales(selOp.depId,selOp.fecha)); return c?<div style={S.row}><span style={{color:C.muted}}>Cantidad total</span><span style={{fontWeight:700,color:C.gold}}>{fmtCantidad(c)}</span></div>:null;})()}
+                {selOp.depId&&(()=>{const c=selOp.cantidadReal?{cantidad:parseFloat(selOp.cantidadReal),unidad:selOp.unidadReal||"g",estimado:false}:calcularCantidad(selOp.dosisReal||selOp.dosisTeorica||selOp.dosis, litrosActuales(selOp.depId,selOp.fecha)); return c?<div style={S.row}><span style={{color:C.muted}}>Cantidad añadida</span><span style={{fontWeight:700,color:C.gold}}>{fmtCantidad(c)}</span></div>:null;})()}
                 {selOp.depDestino&&<div style={S.row}><span style={{color:C.muted}}>Destino</span><span>{selOp.depDestino}</span></div>}
                 {selOp.etiqueta&&<div style={S.row}><span style={{color:C.muted}}>Etiqueta</span><span>{selOp.etiqueta}</span></div>}
                 {selOp.botellas&&<div style={S.row}><span style={{color:C.muted}}>Unidades</span><span>{selOp.botellas}</span></div>}
