@@ -197,8 +197,11 @@ const PROTOCOLOS_DEFAULT = {
     pStep("densidad", "Nutriferm Special", "0,025 g/L (25% de 0,10 g/L)", 1.000, 1.010),
   ],
   tinto: [],
-  rosado: [],
-  mosto: [],
+  espumoso: [],
+  desgranado: [],
+  hormigon: [],
+  rosado: [], // legacy
+  mosto: [],  // legacy
 };
 
 const TIPOS_OP = [
@@ -316,12 +319,18 @@ const TabBar = ({tab,setTab}) => (
 
 // Colores por tipo de vino
 const COLOR_TIPO = {
-  tinto:  {liq:"#8B1A2A", borde:"#C23050", texto:"#F0A0B0"},
-  blanco: {liq:"#A08020", borde:"#D4B840", texto:"#F0DCA0"},
-  rosado: {liq:"#C05060", borde:"#E07080", texto:"#F8C0C8"},
-  mosto:  {liq:"#5A7A30", borde:"#80B040", texto:"#C0E080"},
+  tinto:      {liq:"#8B1A2A", borde:"#C23050", texto:"#F0A0B0"},
+  blanco:     {liq:"#A08020", borde:"#D4B840", texto:"#F0DCA0"},
+  espumoso:   {liq:"#A08020", borde:"#D4B840", texto:"#F0DCA0"}, // mismo amarillo que blanco
+  desgranado: {liq:"#B85C1A", borde:"#E08030", texto:"#F5C090"},
+  hormigon:   {liq:"#707070", borde:"#A0A0A0", texto:"#D8D8D8"},
+  rosado: {liq:"#C05060", borde:"#E07080", texto:"#F8C0C8"}, // legacy
+  mosto:  {liq:"#5A7A30", borde:"#80B040", texto:"#C0E080"}, // legacy
   vacio:  {liq:"#2A3A4E", borde:"#4A6080", texto:"#8AABCC"},
 };
+
+// Estilos de vino usados en toda la app (color del deposito, vendimia, protocolos)
+const TIPOS_VINO = [["blanco","Blanco"],["espumoso","Espumoso"],["tinto","Tinto"],["desgranado","Desgranado"],["hormigon","Hormigón"]];
 
 const infoVino = (dep, operaciones) => {
   // Busca la ultima operacion de entrada para saber que hay dentro
@@ -804,7 +813,7 @@ export default function BodegaApp() {
           <div style={S.card}>
             <label style={S.label}>Tipo de vino</label>
             <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-              {[["","Sin asignar"],["tinto","Tinto"],["blanco","Blanco"],["rosado","Rosado"],["mosto","Mosto"]].map(([v,l])=>{
+              {[["","Sin asignar"],...TIPOS_VINO].map(([v,l])=>{
                 const sel = (dep.tipoVino||"")===v;
                 const col = COLOR_TIPO[v]||COLOR_TIPO.vacio;
                 return (
@@ -1410,10 +1419,7 @@ export default function BodegaApp() {
             <label style={S.label}>Tipo de vino</label>
             <select style={S.input} value={f.tipoVino||""} onChange={e=>set("tipoVino",e.target.value)}>
               <option value="">-- Selecciona --</option>
-              <option value="tinto">Tinto</option>
-              <option value="blanco">Blanco</option>
-              <option value="rosado">Rosado</option>
-              <option value="mosto">Mosto</option>
+              {TIPOS_VINO.map(([v,l])=><option key={v} value={v}>{l}</option>)}
             </select>
             <label style={S.label}>Anada</label>
             <input type="text" style={S.input} placeholder="ej. 2025" value={f.anada||""} onChange={e=>set("anada",e.target.value)}/>
@@ -1430,7 +1436,7 @@ export default function BodegaApp() {
             <input type="text" style={S.input} placeholder="2025" value={f.campana||""} onChange={e=>set("campana",e.target.value)}/>
             <label style={S.label}>Tipo de vino</label>
             <div style={{display:"flex",gap:6,marginBottom:10}}>
-              {[["tinto","Tinto"],["blanco","Blanco"],["rosado","Rosado"],["mosto","Mosto"]].map(([v,l])=>(
+              {TIPOS_VINO.map(([v,l])=>(
                 <button key={v} onClick={()=>set("tipoVino",v)}
                   style={{flex:1,padding:"7px",borderRadius:8,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
                     border:"2px solid "+((f.tipoVino)===v?C.gold:C.border),
@@ -1896,10 +1902,10 @@ export default function BodegaApp() {
           {/* Filtros */}
           <div style={{marginBottom:10}}>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
-              {["todos","tinto","blanco","rosado","mosto"].map(t=>(
+              {[["todos","Todos"],...TIPOS_VINO].map(([t,l])=>(
                 <button key={t} onClick={()=>setFiltroTipo(t)}
                   style={{padding:"4px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,border:"2px solid "+(filtroTipo===t?COLOR_TIPO[t]?.borde||C.gold:C.border),background:filtroTipo===t?"#1A2535":"transparent",color:filtroTipo===t?COLOR_TIPO[t]?.texto||C.gold:C.muted}}>
-                  {t==="todos"?"Todos":t.charAt(0).toUpperCase()+t.slice(1)}
+                  {l}
                 </button>
               ))}
             </div>
@@ -1940,7 +1946,7 @@ export default function BodegaApp() {
 
           {/* Leyenda */}
           <div style={{display:"flex",gap:12,marginTop:12,fontSize:10,color:C.muted,justifyContent:"center",flexWrap:"wrap"}}>
-            {[["tinto","Tinto"],["blanco","Blanco"],["rosado","Rosado"],["mosto","Mosto"]].map(([k,l])=>(
+            {TIPOS_VINO.map(([k,l])=>(
               <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                 <div style={{width:10,height:10,borderRadius:2,background:COLOR_TIPO[k].liq,border:"1px solid "+COLOR_TIPO[k].borde}}/>{l}
               </div>
@@ -2380,7 +2386,7 @@ export default function BodegaApp() {
         </div>
         <div style={S.body}>
           <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
-            {[["blanco","Blanco"],["tinto","Tinto"],["rosado","Rosado"],["mosto","Mosto"]].map(([v,l])=>(
+            {TIPOS_VINO.map(([v,l])=>(
               <button key={v} onClick={()=>setProtoTipoSel(v)}
                 style={{padding:"5px 14px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
                   border:"2px solid "+(protoTipoSel===v?C.gold:C.border),
