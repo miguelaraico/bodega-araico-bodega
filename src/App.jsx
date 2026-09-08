@@ -193,7 +193,9 @@ const TIPOS_OP = [
   {id:"otro",          label:"Otro"},
 ];
 
-// Productos habituales que se añaden durante la fermentación
+// Normaliza un valor de densidad tecleado con coma (es-ES) o punto a formato con punto
+const normDensidad = (v) => v.replace(",",".").replace(/[^0-9.]/g,"");
+
 const PRODUCTOS_FERMENTACION = [
   "Levadura seca activa",
   "Nutriente / Activador (DAP)",
@@ -801,11 +803,11 @@ export default function BodegaApp() {
                   <div style={{display:"flex",gap:8,marginBottom:12}}>
                     <div style={{flex:1}}>
                       <label style={S.label}>Densidad inicial</label>
-                      <input type="number" step="0.001" style={S.input} placeholder="1.090" value={dep.curvaInicial||""} onChange={e=>setCurva("curvaInicial",e.target.value)}/>
+                      <input type="text" inputMode="decimal" style={S.input} placeholder="1.090" value={dep.curvaInicial||""} onChange={e=>setCurva("curvaInicial",normDensidad(e.target.value))}/>
                     </div>
                     <div style={{flex:1}}>
                       <label style={S.label}>Densidad objetivo</label>
-                      <input type="number" step="0.001" style={S.input} placeholder="0.995" value={dep.curvaObjetivo||""} onChange={e=>setCurva("curvaObjetivo",e.target.value)}/>
+                      <input type="text" inputMode="decimal" style={S.input} placeholder="0.995" value={dep.curvaObjetivo||""} onChange={e=>setCurva("curvaObjetivo",normDensidad(e.target.value))}/>
                     </div>
                     <div style={{flex:1}}>
                       <label style={S.label}>Dias estimados</label>
@@ -1219,7 +1221,7 @@ export default function BodegaApp() {
             <div style={{display:"flex",gap:8}}>
               <div style={{flex:1}}>
                 <label style={S.label}>Densidad (g/L)</label>
-                <input type="number" step="0.001" style={S.input} placeholder="ej. 1.080" value={f.densidad||""} onChange={e=>set("densidad",e.target.value)}/>
+                <input type="text" inputMode="decimal" style={S.input} placeholder="ej. 1.080" value={f.densidad||""} onChange={e=>set("densidad",normDensidad(e.target.value))}/>
               </div>
               <div style={{flex:1}}>
                 <label style={S.label}>Temperatura (C)</label>
