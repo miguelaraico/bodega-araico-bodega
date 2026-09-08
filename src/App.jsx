@@ -258,21 +258,23 @@ const infoVino = (dep, operaciones) => {
 
 // ── Tanque visual ─────────────────────────────────────────────────────────────
 const Tanque = ({dep, litros, resaltado=true, onClick}) => {
-  const info    = {tipo:dep.tipoVino, anada:dep.anada, etiqueta:dep.etiqueta};
+  // Calcular kg totales de vendimia sin prensar en este deposito
+  const kgVendimia = dep._kgVendimia || 0;
+  // Si no hay litros reales ni vendimia pendiente de prensar, el deposito esta realmente vacio:
+  // ignorar tipoVino/anada/etiqueta guardados, que pueden haber quedado obsoletos
+  const vacioReal = !dep.siempreLleno && litros<=0 && kgVendimia<=0;
+  const info    = vacioReal ? {tipo:"",anada:"",etiqueta:""} : {tipo:dep.tipoVino, anada:dep.anada, etiqueta:dep.etiqueta};
   const colores = (info.tipo && COLOR_TIPO[info.tipo]) ? COLOR_TIPO[info.tipo] : COLOR_TIPO.vacio;
   const pct     = dep.capacidad>0 ? Math.min(100, Math.round((litros/dep.capacidad)*100)) : 0;
   const nivel   = dep.siempreLleno ? 100 : pct;
-  const tieneContenido = nivel>0 || (info.tipo && info.tipo!==""&&dep._kgVendimia>0);
+  const tieneContenido = nivel>0 || (info.tipo && info.tipo!==""&&kgVendimia>0);
   const tanqueH = 72, tanqueW = 52;
   const opacidad = resaltado ? 1 : 0.3;
 
   // Texto dentro del tanque: mostrar litros
-  // Calcular kg totales de vendimia sin prensar en este deposito
-  const kgVendimia = dep._kgVendimia || 0;
-
   const litrosTxt = dep.siempreLleno
     ? fmtL(dep.capacidad)
-    : nivel>0 ? fmtL(litros) : (kgVendimia>0 ? kgVendimia.toLocaleString("es-ES")+" kg" : (info.tipo ? "Uva" : "Vacio"));
+    : nivel>0 ? fmtL(litros) : (kgVendimia>0 ? kgVendimia.toLocaleString("es-ES")+" kg" : "Vacio");
   const fontSize = litros>=10000?8:litros>=1000?9:10;
 
   return (
@@ -464,6 +466,9 @@ export default function BodegaApp() {
 
     // Para vendimia/llenado/entrada_granel sin tipoVinoOrigen, usar el deposito guardado
     const dep = depositos.find(d=>d.id===id);
+    // Si ya no quedan litros reales, ignorar el tipoVino/anada/etiqueta guardados en el deposito:
+    // pueden haber quedado obsoletos (p.ej. trasiegos o cargas hechas fuera del flujo normal de la app)
+    if(litrosActuales(id)<=0) return {tipoVino:"",anada:"",etiqueta:""};
     return {tipoVino:dep?.tipoVino||"", anada:dep?.anada||"", etiqueta:dep?.etiqueta||""};
   };
 
