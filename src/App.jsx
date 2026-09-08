@@ -245,6 +245,9 @@ const TIPOS_OP = [
 
 // Normaliza un valor de densidad tecleado con coma (es-ES) o punto a formato con punto
 const normDensidad = (v) => v.replace(",",".").replace(/[^0-9.]/g,"");
+// Corrige lecturas de densidad guardadas antes del fix de coma/punto (ej. "1090" en vez de "1.090").
+// Una densidad de vino real nunca supera 10, asi que cualquier valor mayor se interpreta sin el punto.
+const densOk = v => { const n = parseFloat(v); if(isNaN(n)) return NaN; return n>10 ? n/1000 : n; };
 
 // Extrae {valor, unidadNum, unidadDen} de un texto de dosis tipo "2,5 g/hL", "0,10 g/L", "0,2 g/kg"
 const parseDosis = (texto) => {
@@ -883,7 +886,7 @@ export default function BodegaApp() {
             const fechaInicio = entradaLote?.fecha || (opsFermentacion[0]?.fecha) || null;
             const diaDe = fecha => fechaInicio ? Math.round((new Date(fecha)-new Date(fechaInicio))/86400000) : 0;
 
-            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha), densidad:parseFloat(o.densidad)}));
+            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha), densidad:densOk(o.densidad)})).filter(d=>!isNaN(d.dia)&&!isNaN(d.densidad));
             const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? parseFloat(dep.curvaInicial) : null;
             const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? parseFloat(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
@@ -903,7 +906,7 @@ export default function BodegaApp() {
             };
 
             // Protocolo de aditivos para el tipo de vino de este lote: pasos pendientes segun densidad actual
-            const currentDensidad = opsFermentacion.length>0 ? parseFloat(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
+            const currentDensidad = opsFermentacion.length>0 ? densOk(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
             const protocoloActivo = protocolos[dep.tipoVino||""] || [];
             const omitidos = dep.protocoloOmitidos || [];
             const pasosPendientes = protocoloActivo.filter(step=>{
