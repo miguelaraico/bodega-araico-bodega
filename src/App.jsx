@@ -889,6 +889,13 @@ export default function BodegaApp() {
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
             const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? [{dia:0,densidad:cInicial},{dia:cDias,densidad:cObjetivo}] : [];
             const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), 1);
+            // Dataset combinado (un unico array para el LineChart) para que ambas lineas se dibujen bien
+            const diasCombinados = Array.from(new Set([0, ...(teoricaData.length>0?[cDias]:[]), ...realData.map(d=>d.dia)])).sort((a,b)=>a-b);
+            const chartData = diasCombinados.map(dia=>({
+              dia,
+              real: realData.find(d=>d.dia===dia)?.densidad ?? null,
+              teorica: dia===0&&teoricaData.length>0 ? cInicial : (dia===cDias&&teoricaData.length>0 ? cObjetivo : null),
+            }));
 
             const setCurva = (campo,valor) => {
               if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,[campo]:valor}:b));
@@ -961,15 +968,15 @@ export default function BodegaApp() {
                   {(realData.length>0||teoricaData.length>0) ? (
                     <div style={{width:"100%",height:220}}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart margin={{top:5,right:10,left:-10,bottom:5}}>
+                        <LineChart data={chartData} margin={{top:5,right:10,left:-10,bottom:5}}>
                           <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                           <XAxis dataKey="dia" type="number" domain={[0,maxDia]} allowDecimals={false}
                             tick={{fill:C.muted,fontSize:11}} label={{value:"Dia",position:"insideBottom",offset:-3,fill:C.muted,fontSize:11}}/>
                           <YAxis domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
                           <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}/>
                           <Legend wrapperStyle={{fontSize:11}}/>
-                          {teoricaData.length>0&&<Line data={teoricaData} dataKey="densidad" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="linear" isAnimationActive={false}/>}
-                          {realData.length>0&&<Line data={realData} dataKey="densidad" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" isAnimationActive={false}/>}
+                          {teoricaData.length>0&&<Line dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="linear" connectNulls isAnimationActive={false}/>}
+                          {realData.length>0&&<Line dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
