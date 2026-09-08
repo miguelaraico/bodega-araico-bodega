@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 // ── Claude API para leer PDFs ─────────────────────────────────────────────────
 const leerAnalisisPDF = async (base64, mediaType) => {
@@ -188,7 +189,19 @@ const TIPOS_OP = [
   {id:"embotellado",   label:"Embotellado"},
   {id:"etiquetado",    label:"Etiquetado"},
   {id:"salida_granel", label:"Salida granel"},
+  {id:"aditivo_fermentacion", label:"Producto fermentacion"},
   {id:"otro",          label:"Otro"},
+];
+
+// Productos habituales que se añaden durante la fermentación
+const PRODUCTOS_FERMENTACION = [
+  "Levadura seca activa",
+  "Nutriente / Activador (DAP)",
+  "Enzima pectolitica",
+  "Metabisulfito de potasio (SO2)",
+  "Bacteria maloláctica",
+  "Tanino enologico",
+  "Otro",
 ];
 
 const C = {
@@ -753,6 +766,95 @@ export default function BodegaApp() {
               }}/>
           </div>
 
+          {/* Fermentacion: curva teorica vs real + productos añadidos del lote actual */}
+          {litros>0 && (()=>{
+            const isBarrica = barricas.some(b=>b.id===dep.id);
+            // Historial del lote actual, siempre (independiente del toggle "ver historial completo")
+            const histLoteActual = histDep(dep.id, fechaConsulta, true);
+            const opsFermentacion = histLoteActual.filter(o=>o.tipo==="fermentacion"&&o.densidad).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id);
+            const opsProductos = histLoteActual.filter(o=>["aditivo_fermentacion","sulfitado","clarificacion","filtracion","acidez","azucar"].includes(o.tipo)).sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
+
+            // Dia 0 = fecha de entrada del lote actual (vendimia/llenado/entrada_granel/trasiego recibido)
+            const entradaLote = operaciones
+              .filter(o=>((o.depId===dep.id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===dep.id&&o.tipo==="trasiego"))&&o.fecha<=fechaConsulta)
+              .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
+            const fechaInicio = entradaLote?.fecha || (opsFermentacion[0]?.fecha) || null;
+            const diaDe = fecha => fechaInicio ? Math.round((new Date(fecha)-new Date(fechaInicio))/86400000) : 0;
+
+            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha), densidad:parseFloat(o.densidad)}));
+            const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? parseFloat(dep.curvaInicial) : null;
+            const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? parseFloat(dep.curvaObjetivo) : null;
+            const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
+            const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? [{dia:0,densidad:cInicial},{dia:cDias,densidad:cObjetivo}] : [];
+            const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), 1);
+
+            const setCurva = (campo,valor) => {
+              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,[campo]:valor}:b));
+              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,[campo]:valor}:d));
+            };
+
+            return (
+              <>
+                <div style={S.sec}>Fermentacion</div>
+                <div style={S.card}>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Curva teorica — densidad inicial → objetivo en X dias</div>
+                  <div style={{display:"flex",gap:8,marginBottom:12}}>
+                    <div style={{flex:1}}>
+                      <label style={S.label}>Densidad inicial</label>
+                      <input type="number" step="0.001" style={S.input} placeholder="1.090" value={dep.curvaInicial||""} onChange={e=>setCurva("curvaInicial",e.target.value)}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <label style={S.label}>Densidad objetivo</label>
+                      <input type="number" step="0.001" style={S.input} placeholder="0.995" value={dep.curvaObjetivo||""} onChange={e=>setCurva("curvaObjetivo",e.target.value)}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <label style={S.label}>Dias estimados</label>
+                      <input type="number" style={S.input} placeholder="10" value={dep.curvaDias||""} onChange={e=>setCurva("curvaDias",e.target.value)}/>
+                    </div>
+                  </div>
+                  {(realData.length>0||teoricaData.length>0) ? (
+                    <div style={{width:"100%",height:220}}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart margin={{top:5,right:10,left:-10,bottom:5}}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                          <XAxis dataKey="dia" type="number" domain={[0,maxDia]} allowDecimals={false}
+                            tick={{fill:C.muted,fontSize:11}} label={{value:"Dia",position:"insideBottom",offset:-3,fill:C.muted,fontSize:11}}/>
+                          <YAxis domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
+                          <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}/>
+                          <Legend wrapperStyle={{fontSize:11}}/>
+                          {teoricaData.length>0&&<Line data={teoricaData} dataKey="densidad" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="linear" isAnimationActive={false}/>}
+                          {realData.length>0&&<Line data={realData} dataKey="densidad" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" isAnimationActive={false}/>}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>Rellena la curva teorica y/o registra densidades reales para ver el grafico</div>
+                  )}
+                </div>
+
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,marginTop:16}}>
+                  <div style={S.sec}>Productos añadidos (lote actual)</div>
+                  <Btn variant="ghost" small onClick={()=>{
+                    setFormOp({depId:dep.id,fecha:hoy(),tipo:"aditivo_fermentacion",producto:"",dosisTeorica:"",dosisReal:""});
+                    setVista("nueva_op");
+                  }}>+ Producto</Btn>
+                </div>
+                {opsProductos.length===0&&<div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"16px"}}>Sin productos registrados en este lote</div>}
+                {opsProductos.map(op=>(
+                  <div key={op.id} onClick={()=>setSelOp(op)} style={{...S.card,marginBottom:6,padding:"10px 12px",cursor:"pointer"}}>
+                    <div style={{display:"flex",justifyContent:"space-between"}}>
+                      <span style={{fontSize:12,fontWeight:700,color:C.gold}}>{op.producto||(TIPOS_OP.find(t=>t.id===op.tipo)?.label)}</span>
+                      <span style={{fontSize:11,color:C.muted}}>{fmtF(op.fecha)}</span>
+                    </div>
+                    <div style={{fontSize:12,color:C.muted,marginTop:2}}>
+                      {(op.dosisTeorica||op.dosisReal) ? "Teorica: "+(op.dosisTeorica||"-")+"   ·   Real: "+(op.dosisReal||"-") : (op.dosis||"")}
+                    </div>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
+
           {/* Historial */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,marginTop:16}}>
             <div style={S.sec}>Historial</div>
@@ -794,7 +896,7 @@ export default function BodegaApp() {
                 </div>}
                 {op.litros&&<div style={{fontSize:13,color:C.text}}>{fmtL(op.litros)}{op.kg?" / "+fmtK(op.kg):""}</div>}
                 {op.variedad&&<div style={{fontSize:12,color:C.muted}}>{op.variedad}{op.campana?" - "+op.campana:""}{op.grado?" - "+op.grado+" Gr":""}</div>}
-                {op.producto&&<div style={{fontSize:12,color:C.muted}}>{op.producto}{op.dosis?" - "+op.dosis:""}</div>}
+                {op.producto&&<div style={{fontSize:12,color:C.muted}}>{op.producto}{(op.dosisTeorica||op.dosisReal)?" - T: "+(op.dosisTeorica||"-")+" / R: "+(op.dosisReal||"-"):(op.dosis?" - "+op.dosis:"")}</div>}
                 {op.temperatura&&<div style={{fontSize:12,color:C.muted}}>Temp: {op.temperatura} C</div>}
                 {op.depDestino&&op.tipo==="trasiego"&&op.depId===dep.id&&<div style={{fontSize:12,color:C.muted}}>Destino: {op.depDestino}</div>}
                 {op.depId&&op.tipo==="trasiego"&&op.depDestino===dep.id&&<div style={{fontSize:12,color:C.muted}}>Origen: {op.depId}</div>}
@@ -851,7 +953,9 @@ export default function BodegaApp() {
                 {selOp.so2total&&<div style={S.row}><span style={{color:C.muted}}>SO2 total</span><span>{selOp.so2total} mg/L</span></div>}
                 {selOp.azucares&&<div style={S.row}><span style={{color:C.muted}}>Azucares</span><span>{selOp.azucares} g/L</span></div>}
                 {selOp.producto&&<div style={S.row}><span style={{color:C.muted}}>Producto</span><span>{selOp.producto}</span></div>}
-                {selOp.dosis&&<div style={S.row}><span style={{color:C.muted}}>Dosis</span><span>{selOp.dosis}</span></div>}
+                {selOp.dosisTeorica&&<div style={S.row}><span style={{color:C.muted}}>Dosis teorica</span><span>{selOp.dosisTeorica}</span></div>}
+                {selOp.dosisReal&&<div style={S.row}><span style={{color:C.muted}}>Dosis real</span><span style={{fontWeight:700,color:C.accent}}>{selOp.dosisReal}</span></div>}
+                {!selOp.dosisTeorica&&!selOp.dosisReal&&selOp.dosis&&<div style={S.row}><span style={{color:C.muted}}>Dosis</span><span>{selOp.dosis}</span></div>}
                 {selOp.depDestino&&<div style={S.row}><span style={{color:C.muted}}>Destino</span><span>{selOp.depDestino}</span></div>}
                 {selOp.etiqueta&&<div style={S.row}><span style={{color:C.muted}}>Etiqueta</span><span>{selOp.etiqueta}</span></div>}
                 {selOp.botellas&&<div style={S.row}><span style={{color:C.muted}}>Unidades</span><span>{selOp.botellas}</span></div>}
@@ -885,6 +989,7 @@ export default function BodegaApp() {
     const esEntradaAlmacen = f.tipo==="entrada_almacen";
     const esTrasiego    = f.tipo==="trasiego";
     const esTrat     = ["sulfitado","clarificacion","filtracion","acidez","azucar"].includes(f.tipo);
+    const esAditivo  = f.tipo==="aditivo_fermentacion";
     const esAnalisis = f.tipo==="analisis";
     const esEmbotell = f.tipo==="embotellado";
     const esTemp     = f.tipo==="temperatura";
@@ -972,14 +1077,18 @@ export default function BodegaApp() {
         etiquetaOrigen: (f.tipoVino?f.tipoVino.charAt(0).toUpperCase()+f.tipoVino.slice(1):"")+(f.campana?" "+f.campana:"")
       } : null;
 
+      // Si es aditivo de fermentacion con producto "Otro", usar el texto libre como producto final
+      const productoFinal = (esAditivo && f.producto==="Otro" && f.productoOtro) ? {producto:f.productoOtro, productoOtro:undefined} : null;
+
       if(f._editandoId) {
         const {_editandoId, ...opSinId} = f;
-        setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId}:o));
+        setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId,...(productoFinal||{})}:o));
       } else {
         const ops = [{...f, id:Date.now(), 
           ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{}),
           ...(tipoVinoEntrada||{}),
-          ...(tipoVinoVendimia||{})
+          ...(tipoVinoVendimia||{}),
+          ...(productoFinal||{})
         }];
         if(f.tipo==="trasiego"&&f.depDestino2&&f.litros2) {
           ops.push({...f, id:Date.now()+1, depDestino:f.depDestino2, litros:f.litros2, depDestino2:undefined, litros2:undefined,
@@ -1000,7 +1109,7 @@ export default function BodegaApp() {
             }:d));
           }
           // Copiar solo analisis y tratamientos del origen al destino
-          const tiposACopiar = ["analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","otro"];
+          const tiposACopiar = ["analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","aditivo_fermentacion","otro"];
           const opsOrigen = operaciones
             .filter(o=>o.depId===f.depId && o.fecha<=f.fecha && tiposACopiar.includes(o.tipo))
             .map(o=>({...o, id:Date.now()+Math.random(), depId:depId,
@@ -1014,7 +1123,7 @@ export default function BodegaApp() {
         // Limpiar origen si queda vacio (usando litros calculados ANTES del trasiego)
         const totalSale = parseFloat(f.litros||0) + parseFloat(f.litros2||0);
         if(depOrigen&&!depOrigen.siempreLleno&&litrosOrigenAntes-totalSale<=0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null,curvaInicial:"",curvaObjetivo:"",curvaDias:""}:d));
         }
       }
 
@@ -1036,7 +1145,7 @@ export default function BodegaApp() {
           if(!f._editandoId) {/* ya se añadió arriba */}
         }
         if(litrosAntes - litrosTras - merma <= 0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:""}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:""}:d));
         }
       }
 
@@ -1323,8 +1432,41 @@ export default function BodegaApp() {
           {esTrat&&<>
             <label style={S.label}>Producto</label>
             <input type="text" style={S.input} placeholder="Nombre del producto" value={f.producto||""} onChange={e=>set("producto",e.target.value)}/>
-            <label style={S.label}>Dosis</label>
-            <input type="text" style={S.input} placeholder="ej. 5 g/hL" value={f.dosis||""} onChange={e=>set("dosis",e.target.value)}/>
+            <div style={{display:"flex",gap:8}}>
+              <div style={{flex:1}}>
+                <label style={S.label}>Dosis teorica</label>
+                <input type="text" style={S.input} placeholder="ej. 5 g/hL" value={f.dosisTeorica||""} onChange={e=>set("dosisTeorica",e.target.value)}/>
+              </div>
+              <div style={{flex:1}}>
+                <label style={S.label}>Dosis real</label>
+                <input type="text" style={S.input} placeholder="ej. 5 g/hL" value={f.dosisReal||f.dosis||""} onChange={e=>set("dosisReal",e.target.value)}/>
+              </div>
+            </div>
+          </>}
+
+          {/* Producto de fermentacion (levaduras, nutrientes, enzimas...) */}
+          {esAditivo&&<>
+            <div style={{...S.card,background:"rgba(74,155,127,0.1)",borderColor:C.accent,fontSize:13,color:C.accent,marginBottom:10}}>
+              Registra aqui lo que añades durante la fermentacion para comparar dosis teorica vs real
+            </div>
+            <label style={S.label}>Producto</label>
+            <select style={S.input} value={f.producto||""} onChange={e=>set("producto",e.target.value)}>
+              <option value="">-- Selecciona --</option>
+              {PRODUCTOS_FERMENTACION.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+            {f.producto==="Otro"&&
+              <input type="text" style={{...S.input,marginTop:6}} placeholder="Nombre del producto" value={f.productoOtro||""} onChange={e=>set("productoOtro",e.target.value)}/>
+            }
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <div style={{flex:1}}>
+                <label style={S.label}>Dosis teorica</label>
+                <input type="text" style={S.input} placeholder="ej. 20 g/hL" value={f.dosisTeorica||""} onChange={e=>set("dosisTeorica",e.target.value)}/>
+              </div>
+              <div style={{flex:1}}>
+                <label style={S.label}>Dosis real</label>
+                <input type="text" style={S.input} placeholder="ej. 18 g/hL" value={f.dosisReal||""} onChange={e=>set("dosisReal",e.target.value)}/>
+              </div>
+            </div>
           </>}
 
           {/* Temperatura */}
