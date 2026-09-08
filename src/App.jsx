@@ -79,6 +79,7 @@ const cargarBodega = async () => {
       materiales:  map.materiales  ? JSON.parse(map.materiales)  : null,
       stock:       map.stock       ? JSON.parse(map.stock)       : null,
       productos:   map.productos   ? JSON.parse(map.productos)   : null,
+      protocolos:  map.protocolos  ? JSON.parse(map.protocolos)  : null,
       orujos:      map.orujos      ? parseFloat(map.orujos)      : 0,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null}; }
@@ -112,7 +113,7 @@ const MAPA_PRODUCTOS = {
   "cerveza_negra":  "Cerveza Negra",
 };
 
-const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj) => {
+const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots) => {
   try {
     await supaFetch("POST","bodega_datos",[
       {bodega_id:BODEGA_ID,clave:"depositos",   valor:JSON.stringify(dep)},
@@ -122,6 +123,7 @@ const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj) => {
       {bodega_id:BODEGA_ID,clave:"materiales",  valor:JSON.stringify(mat)},
       {bodega_id:BODEGA_ID,clave:"stock",       valor:JSON.stringify(stk)},
       {bodega_id:BODEGA_ID,clave:"productos",   valor:JSON.stringify(prods)},
+      {bodega_id:BODEGA_ID,clave:"protocolos",  valor:JSON.stringify(prots)},
       {bodega_id:BODEGA_ID,clave:"orujos",      valor:String(oruj)},
     ]);
   } catch(e){ console.error(e); }
@@ -170,6 +172,34 @@ const BARRICAS_DEFAULT = [
   {id:"BA42", nombre:"BA42", tipo:"americano", capacidad:225, activo:true, tipoVino:"tinto",  anada:"2023", etiqueta:"Orgullo"},
   ...Array.from({length:7}, (_,i)=>({id:"BA"+(i+43).toString().padStart(2,"0"), nombre:"BA"+(i+43).toString().padStart(2,"0"), tipo:"americano",capacidad:225, activo:true, tipoVino:"blanco", anada:"2024", etiqueta:"Blanco 2024"})),
 ];
+
+// Protocolo de aditivos de fermentacion por tipo de vino: pasos ordenados,
+// cada uno con el momento en que se dispara (inicio de lote o rango de densidad)
+let _protId = 1;
+const pStep = (momento, producto, dosis, densidadMin, densidadMax) => ({
+  id: "p"+(_protId++), momento, producto, dosis,
+  ...(densidadMin!=null?{densidadMin}:{}), ...(densidadMax!=null?{densidadMax}:{}),
+});
+const PROTOCOLOS_DEFAULT = {
+  blanco: [
+    pStep("inicio", "Asotan", "0,2 g/kg"),
+    pStep("inicio", "Arom MP", "0,04 g/kg"),
+    pStep("inicio", "RS", "0,04 g/kg"),
+    pStep("inicio", "Plantis AF (flotacion)", "15 g/hL"),
+    pStep("inicio", "Levadura 181 (pie de cuba)", "2,5 g/hL"),
+    pStep("inicio", "Nutriferm Arom (pie de cuba)", "2,5 g/hL"),
+    pStep("inicio", "Pro Blanco (pie de cuba)", "2,5 g/hL"),
+    pStep("densidad", "Tan Citrus", "0,05 g/L (50% de 0,10 g/L)", 1.060, 1.070),
+    pStep("densidad", "Nutriferm Special", "0,05 g/L (50% de 0,10 g/L)", 1.060, 1.070),
+    pStep("densidad", "Tan Citrus", "0,025 g/L (25% de 0,10 g/L)", 1.020, 1.030),
+    pStep("densidad", "Nutriferm Special", "0,025 g/L (25% de 0,10 g/L)", 1.020, 1.030),
+    pStep("densidad", "Tan Citrus", "0,025 g/L (25% de 0,10 g/L)", 1.000, 1.010),
+    pStep("densidad", "Nutriferm Special", "0,025 g/L (25% de 0,10 g/L)", 1.000, 1.010),
+  ],
+  tinto: [],
+  rosado: [],
+  mosto: [],
+};
 
 const TIPOS_OP = [
   {id:"vendimia",        label:"Entrada vendimia"},
@@ -240,7 +270,7 @@ const Btn = ({children,onClick,variant="primary",small=false,full=false}) => {
 const TabBar = ({tab,setTab}) => (
   <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,
     background:C.card,borderTop:"1px solid "+C.border,display:"flex",zIndex:20}}>
-    {[{id:"depositos",label:"Depositos"},{id:"barricas",label:"Barricas"},{id:"ops",label:"Operaciones"},{id:"stock",label:"Stock"},{id:"materiales",label:"Materiales"}].map(t=>(
+    {[{id:"depositos",label:"Depositos"},{id:"barricas",label:"Barricas"},{id:"ops",label:"Operaciones"},{id:"stock",label:"Stock"},{id:"materiales",label:"Materiales"},{id:"protocolos",label:"Protocolos"}].map(t=>(
       <button key={t.id} onClick={()=>setTab(t.id)}
         style={{flex:1,padding:"10px 2px 8px",background:"none",border:"none",cursor:"pointer",
           color:tab===t.id?C.gold:C.muted,fontFamily:"Georgia,serif",fontSize:10,fontWeight:tab===t.id?700:400}}>
@@ -349,6 +379,7 @@ export default function BodegaApp() {
   const [guardando,    setGuardando]    = useState(false);
   const [vista,        setVista]        = useState("lista");
   const [selId,        setSelId]        = useState(null);
+  useEffect(()=>{ setRecordatoriosOcultos([]); },[selId]);
   const [formOp,       setFormOp]       = useState({});
   const [filtroTipo,   setFiltroTipo]   = useState("todos");
   const [filtroAnada,  setFiltroAnada]  = useState("todas");
@@ -392,13 +423,17 @@ export default function BodegaApp() {
     {id:"cerveza_negra",  nombre:"Cerveza Negra",         activo:true},
   ]);
   const [selOp,        setSelOp]        = useState(null);
+  const [protocolos,   setProtocolos]   = useState(PROTOCOLOS_DEFAULT);
+  const [recordatoriosOcultos, setRecordatoriosOcultos] = useState([]); // ids de pasos de protocolo marcados "esperar" en esta sesion
+  const [protoTipoSel, setProtoTipoSel] = useState("blanco");
+  const [nuevoPaso,    setNuevoPaso]    = useState({momento:"inicio",producto:"",dosis:"",densidadMin:"",densidadMax:""});
   const [verHistorialCompleto, setVerHistorialCompleto] = useState(false); // operacion seleccionada para ver/editar
   const [formMat,      setFormMat]      = useState({});
   const pdfRef = useRef(null);
   const saveRef = useRef(null);
 
   useEffect(()=>{
-    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk,productos:prods,orujos:oruj})=>{
+    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk,productos:prods,protocolos:prots,orujos:oruj})=>{
       if(d)     setDepositos(d);         else setDepositos(DEPOSITOS_DEFAULT);
       if(b)     setBarricas(b);          else setBarricas(BARRICAS_DEFAULT);
       if(o)     setOperaciones(o);       else setOperaciones([]);
@@ -406,6 +441,7 @@ export default function BodegaApp() {
       if(mat)   setMateriales(mat);
       if(stk)   setStockInicial(stk);
       if(prods) setProductos(prods);
+      if(prots) setProtocolos(prots);
       if(oruj)  setOrujos(oruj);
       setCargando(false);
     });
@@ -418,10 +454,10 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos,protocolos);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos]);
+  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos,protocolos]);
 
   const litrosActuales = (id, hastaFecha) => {
     const contenedor = [...depositos,...barricas].find(d=>d.id===id);
@@ -795,9 +831,50 @@ export default function BodegaApp() {
               else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,[campo]:valor}:d));
             };
 
+            // Protocolo de aditivos para el tipo de vino de este lote: pasos pendientes segun densidad actual
+            const currentDensidad = opsFermentacion.length>0 ? parseFloat(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
+            const protocoloActivo = protocolos[dep.tipoVino||""] || [];
+            const omitidos = dep.protocoloOmitidos || [];
+            const pasosPendientes = protocoloActivo.filter(step=>{
+              if(omitidos.includes(step.id)) return false;
+              if(recordatoriosOcultos.includes(step.id)) return false;
+              if(histLoteActual.some(o=>o.protocoloStepId===step.id)) return false;
+              if(step.momento==="inicio") return true;
+              if(step.momento==="densidad") return currentDensidad!=null && currentDensidad<=step.densidadMax;
+              return false;
+            });
+            const omitirPaso = stepId => {
+              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,protocoloOmitidos:[...(b.protocoloOmitidos||[]),stepId]}:b));
+              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,protocoloOmitidos:[...(d.protocoloOmitidos||[]),stepId]}:d));
+            };
+            const confirmarPaso = step => {
+              setFormOp({depId:dep.id, fecha:hoy(), tipo:"aditivo_fermentacion",
+                producto:"Otro", productoOtro:step.producto,
+                dosisTeorica:step.dosis, dosisReal:step.dosis,
+                protocoloStepId:step.id});
+              setVista("nueva_op");
+            };
+
             return (
               <>
                 <div style={S.sec}>Fermentacion</div>
+
+                {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
+                  {pasosPendientes.map(step=>(
+                    <div key={step.id} style={{...S.card,borderColor:C.gold,background:"rgba(200,169,110,0.08)",marginBottom:6,padding:"10px 12px"}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{step.producto}</div>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
+                        {step.dosis}{step.momento==="densidad"?" · densidad "+step.densidadMin+"-"+step.densidadMax:" · al inicio del lote"}
+                      </div>
+                      <div style={{display:"flex",gap:6}}>
+                        <Btn variant="gold" small onClick={()=>confirmarPaso(step)}>Ya lo eché</Btn>
+                        <Btn variant="ghost" small onClick={()=>omitirPaso(step.id)}>No lo añado</Btn>
+                        <Btn variant="ghost" small onClick={()=>setRecordatoriosOcultos(prev=>[...prev,step.id])}>Esperar</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>}
+
                 <div style={S.card}>
                   <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Curva teorica — densidad inicial → objetivo en X dias</div>
                   <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -1125,7 +1202,7 @@ export default function BodegaApp() {
         // Limpiar origen si queda vacio (usando litros calculados ANTES del trasiego)
         const totalSale = parseFloat(f.litros||0) + parseFloat(f.litros2||0);
         if(depOrigen&&!depOrigen.siempreLleno&&litrosOrigenAntes-totalSale<=0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null,curvaInicial:"",curvaObjetivo:"",curvaDias:""}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null,curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[]}:d));
         }
       }
 
@@ -1147,7 +1224,7 @@ export default function BodegaApp() {
           if(!f._editandoId) {/* ya se añadió arriba */}
         }
         if(litrosAntes - litrosTras - merma <= 0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:""}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[]}:d));
         }
       }
 
@@ -2178,6 +2255,100 @@ export default function BodegaApp() {
               </div>
             </div>
           )}
+        </div>
+        <TabBar tab={tab} setTab={setTab}/>
+      </div>
+    );
+  }
+
+  // ── TAB PROTOCOLOS ────────────────────────────────────────────────────────
+  if(tab==="protocolos") {
+    const pasos = protocolos[protoTipoSel] || [];
+    const moverPaso = (idx, dir) => {
+      const nuevos = [...pasos];
+      const j = idx+dir;
+      if(j<0||j>=nuevos.length) return;
+      [nuevos[idx],nuevos[j]] = [nuevos[j],nuevos[idx]];
+      setProtocolos(prev=>({...prev,[protoTipoSel]:nuevos}));
+    };
+    const borrarPaso = idx => {
+      if(!window.confirm("¿Borrar este paso del protocolo?")) return;
+      setProtocolos(prev=>({...prev,[protoTipoSel]:pasos.filter((_,i)=>i!==idx)}));
+    };
+    const añadirPaso = () => {
+      if(!nuevoPaso.producto||!nuevoPaso.dosis) return;
+      if(nuevoPaso.momento==="densidad"&&(!nuevoPaso.densidadMin||!nuevoPaso.densidadMax)) return;
+      const paso = {id:"p"+Date.now(), momento:nuevoPaso.momento, producto:nuevoPaso.producto, dosis:nuevoPaso.dosis,
+        ...(nuevoPaso.momento==="densidad"?{densidadMin:parseFloat(nuevoPaso.densidadMin),densidadMax:parseFloat(nuevoPaso.densidadMax)}:{})};
+      setProtocolos(prev=>({...prev,[protoTipoSel]:[...pasos,paso]}));
+      setNuevoPaso({momento:"inicio",producto:"",dosis:"",densidadMin:"",densidadMax:""});
+    };
+    return (
+      <div style={S.app}>
+        <div style={S.header}>
+          <div style={S.htitle}>Protocolos de fermentacion</div>
+        </div>
+        <div style={S.body}>
+          <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+            {[["blanco","Blanco"],["tinto","Tinto"],["rosado","Rosado"],["mosto","Mosto"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setProtoTipoSel(v)}
+                style={{padding:"5px 14px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
+                  border:"2px solid "+(protoTipoSel===v?C.gold:C.border),
+                  background:protoTipoSel===v?"#1A2535":"transparent",
+                  color:protoTipoSel===v?C.gold:C.muted}}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          <div style={S.sec}>Pasos ({pasos.length})</div>
+          {pasos.length===0&&<div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"16px"}}>Sin pasos definidos para {protoTipoSel}</div>}
+          {pasos.map((step,idx)=>(
+            <div key={step.id} style={{...S.card,marginBottom:6,padding:"10px 12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{idx+1}. {step.producto}</div>
+                  <div style={{fontSize:12,color:C.muted}}>{step.dosis} · {step.momento==="densidad"?"densidad "+step.densidadMin+"-"+step.densidadMax:"al inicio del lote"}</div>
+                </div>
+                <div style={{display:"flex",gap:4}}>
+                  <button onClick={()=>moverPaso(idx,-1)} disabled={idx===0} style={{background:"none",border:"none",color:idx===0?C.border:C.muted,cursor:idx===0?"default":"pointer",fontSize:16}}>↑</button>
+                  <button onClick={()=>moverPaso(idx,1)} disabled={idx===pasos.length-1} style={{background:"none",border:"none",color:idx===pasos.length-1?C.border:C.muted,cursor:idx===pasos.length-1?"default":"pointer",fontSize:16}}>↓</button>
+                  <button onClick={()=>borrarPaso(idx)} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:14}}>✕</button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <div style={{...S.sec,marginTop:20}}>Añadir paso</div>
+          <div style={S.card}>
+            <label style={S.label}>Momento</label>
+            <div style={{display:"flex",gap:6,marginBottom:10}}>
+              {[["inicio","Al inicio del lote"],["densidad","Rango de densidad"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setNuevoPaso(p=>({...p,momento:v}))}
+                  style={{padding:"5px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
+                    border:"2px solid "+(nuevoPaso.momento===v?C.gold:C.border),
+                    background:nuevoPaso.momento===v?"#1A2535":"transparent",
+                    color:nuevoPaso.momento===v?C.gold:C.muted}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            {nuevoPaso.momento==="densidad"&&<div style={{display:"flex",gap:8,marginBottom:10}}>
+              <div style={{flex:1}}>
+                <label style={S.label}>Densidad min</label>
+                <input type="text" inputMode="decimal" style={S.input} placeholder="1.020" value={nuevoPaso.densidadMin} onChange={e=>setNuevoPaso(p=>({...p,densidadMin:normDensidad(e.target.value)}))}/>
+              </div>
+              <div style={{flex:1}}>
+                <label style={S.label}>Densidad max</label>
+                <input type="text" inputMode="decimal" style={S.input} placeholder="1.030" value={nuevoPaso.densidadMax} onChange={e=>setNuevoPaso(p=>({...p,densidadMax:normDensidad(e.target.value)}))}/>
+              </div>
+            </div>}
+            <label style={S.label}>Producto</label>
+            <input type="text" style={S.input} placeholder="Nombre del producto" value={nuevoPaso.producto} onChange={e=>setNuevoPaso(p=>({...p,producto:e.target.value}))}/>
+            <label style={S.label}>Dosis</label>
+            <input type="text" style={{...S.input,marginBottom:12}} placeholder="ej. 20 g/hL" value={nuevoPaso.dosis} onChange={e=>setNuevoPaso(p=>({...p,dosis:e.target.value}))}/>
+            <Btn variant="gold" full onClick={añadirPaso}>+ Añadir paso a {protoTipoSel}</Btn>
+          </div>
         </div>
         <TabBar tab={tab} setTab={setTab}/>
       </div>
