@@ -226,6 +226,27 @@ const TIPOS_OP = [
 // Normaliza un valor de densidad tecleado con coma (es-ES) o punto a formato con punto
 const normDensidad = (v) => v.replace(",",".").replace(/[^0-9.]/g,"");
 
+// Extrae {valor, unidadNum, unidadDen} de un texto de dosis tipo "2,5 g/hL", "0,10 g/L", "0,2 g/kg"
+const parseDosis = (texto) => {
+  if(!texto) return null;
+  const m = String(texto).replace(",",".").match(/(\d+(?:\.\d+)?)\s*(g|ml|kg)\s*\/\s*(hl|l|kg)/i);
+  if(!m) return null;
+  return {valor:parseFloat(m[1]), unidadNum:m[2].toLowerCase(), unidadDen:m[3].toLowerCase()};
+};
+// Calcula la cantidad total a preparar segun la dosis y los litros del lote.
+// Para dosis en g/kg (referidas al peso de uva) se estima el kg a partir de los litros (rendimiento ~70%).
+const calcularCantidad = (dosisTexto, litros) => {
+  const p = parseDosis(dosisTexto);
+  if(!p||!litros) return null;
+  let cantidad, estimado=false;
+  if(p.unidadDen==="hl") cantidad = p.valor*(litros/100);
+  else if(p.unidadDen==="l") cantidad = p.valor*litros;
+  else { cantidad = p.valor*(litros/0.7); estimado=true; } // kg estimados desde litros
+  const unidad = p.unidadNum==="ml"?"ml":(p.unidadNum==="kg"?"kg":"g");
+  return {cantidad, unidad, estimado};
+};
+const fmtCantidad = c => c==null?"":(c.cantidad<10?c.cantidad.toFixed(2):Math.round(c.cantidad).toLocaleString("es-ES"))+" "+c.unidad+(c.estimado?" (estimado)":"");
+
 const PRODUCTOS_FERMENTACION = [
   "Levadura seca activa",
   "Nutriente / Activador (DAP)",
@@ -865,6 +886,7 @@ export default function BodegaApp() {
                       <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{step.producto}</div>
                       <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
                         {step.dosis}{step.momento==="densidad"?" · densidad "+step.densidadMin+"-"+step.densidadMax:" · al inicio del lote"}
+                        {(()=>{const c=calcularCantidad(step.dosis,litros); return c?<span style={{color:C.gold,fontWeight:700}}> · Total: {fmtCantidad(c)}</span>:null;})()}
                       </div>
                       <div style={{display:"flex",gap:6}}>
                         <Btn variant="gold" small onClick={()=>confirmarPaso(step)}>Ya lo eché</Btn>
@@ -927,6 +949,7 @@ export default function BodegaApp() {
                     </div>
                     <div style={{fontSize:12,color:C.muted,marginTop:2}}>
                       {(op.dosisTeorica||op.dosisReal) ? "Teorica: "+(op.dosisTeorica||"-")+"   ·   Real: "+(op.dosisReal||"-") : (op.dosis||"")}
+                      {(()=>{const c=calcularCantidad(op.dosisReal||op.dosisTeorica||op.dosis,litros); return c?<span style={{color:C.gold}}> · Total: {fmtCantidad(c)}</span>:null;})()}
                     </div>
                   </div>
                 ))}
@@ -1035,6 +1058,7 @@ export default function BodegaApp() {
                 {selOp.dosisTeorica&&<div style={S.row}><span style={{color:C.muted}}>Dosis teorica</span><span>{selOp.dosisTeorica}</span></div>}
                 {selOp.dosisReal&&<div style={S.row}><span style={{color:C.muted}}>Dosis real</span><span style={{fontWeight:700,color:C.accent}}>{selOp.dosisReal}</span></div>}
                 {!selOp.dosisTeorica&&!selOp.dosisReal&&selOp.dosis&&<div style={S.row}><span style={{color:C.muted}}>Dosis</span><span>{selOp.dosis}</span></div>}
+                {selOp.depId&&(()=>{const c=calcularCantidad(selOp.dosisReal||selOp.dosisTeorica||selOp.dosis, litrosActuales(selOp.depId,selOp.fecha)); return c?<div style={S.row}><span style={{color:C.muted}}>Cantidad total</span><span style={{fontWeight:700,color:C.gold}}>{fmtCantidad(c)}</span></div>:null;})()}
                 {selOp.depDestino&&<div style={S.row}><span style={{color:C.muted}}>Destino</span><span>{selOp.depDestino}</span></div>}
                 {selOp.etiqueta&&<div style={S.row}><span style={{color:C.muted}}>Etiqueta</span><span>{selOp.etiqueta}</span></div>}
                 {selOp.botellas&&<div style={S.row}><span style={{color:C.muted}}>Unidades</span><span>{selOp.botellas}</span></div>}
@@ -1521,6 +1545,7 @@ export default function BodegaApp() {
                 <input type="text" style={S.input} placeholder="ej. 5 g/hL" value={f.dosisReal||f.dosis||""} onChange={e=>set("dosisReal",e.target.value)}/>
               </div>
             </div>
+            {f.depId&&(()=>{const c=calcularCantidad(f.dosisReal||f.dosis||f.dosisTeorica, litrosActuales(f.depId,f.fecha||hoy())); return c?<div style={{fontSize:12,color:C.gold,marginTop:6}}>Cantidad total a preparar: {fmtCantidad(c)}</div>:null;})()}
           </>}
 
           {/* Producto de fermentacion (levaduras, nutrientes, enzimas...) */}
@@ -1546,6 +1571,7 @@ export default function BodegaApp() {
                 <input type="text" style={S.input} placeholder="ej. 18 g/hL" value={f.dosisReal||""} onChange={e=>set("dosisReal",e.target.value)}/>
               </div>
             </div>
+            {f.depId&&(()=>{const c=calcularCantidad(f.dosisReal||f.dosisTeorica, litrosActuales(f.depId,f.fecha||hoy())); return c?<div style={{fontSize:12,color:C.gold,marginTop:6}}>Cantidad total a preparar: {fmtCantidad(c)}</div>:null;})()}
           </>}
 
           {/* Temperatura */}
