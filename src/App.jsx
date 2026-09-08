@@ -180,6 +180,23 @@ const pStep = (momento, producto, dosis, densidadMin, densidadMax) => ({
   id: "p"+(_protId++), momento, producto, dosis,
   ...(densidadMin!=null?{densidadMin}:{}), ...(densidadMax!=null?{densidadMax}:{}),
 });
+// Protocolo de tinto: mismo esquema para Desgranado y Hormigon, solo cambian las levaduras
+const protocoloTinto = (levadura1, levadura2) => [
+  pStep("inicio", "Meta", "0,13-0,14 g/kg"),
+  pStep("inicio", "Tartarico", "Segun analisis de acidez"),
+  pStep("inicio", levadura1, "0,16 g/kg"),
+  pStep("inicio", levadura2, "0,08 g/kg"),
+  pStep("inicio", "Nutriente Energy", "0,2 g/kg"),
+  pStep("inicio", "Tanino Tan V (75%)", "0,12 g/kg (75% de 0,16 g/kg)"),
+  pStep("densidad", "Tanino Red Fruit (50%)", "0,08 g/kg (50% de 0,16 g/kg)", 1.060, 1.060),
+  pStep("densidad", "Tanino Red Fruit (25%)", "0,04 g/kg (25% de 0,16 g/kg)", 1.030, 1.030),
+  pStep("densidad", "Nutriferm Special (40%)", "0,08 g/kg (40% de 0,2 g/kg)", 1.030, 1.030),
+  pStep("densidad", "Tanino Red Fruit (25%)", "0,04 g/kg (25% de 0,16 g/kg)", 1.015, 1.015),
+  pStep("densidad", "Nutriferm Special (20%)", "0,04 g/kg (20% de 0,2 g/kg)", 1.015, 1.015),
+  pStep("densidad", "Nutriferm Special (20%)", "0,04 g/kg (20% de 0,2 g/kg)", 1.000, 1.000),
+  pStep("densidad", "Nutriferm Special (20%)", "0,04 g/kg (20% de 0,2 g/kg)", 0.997, 0.997),
+  pStep("densidad", "Tanino Tan V (25%, tras prensa)", "0,04 g/kg (25% de 0,16 g/kg)", 0.997, 0.997),
+];
 const PROTOCOLOS_DEFAULT = {
   blanco: [
     pStep("inicio", "Asotan", "0,2 g/kg"),
@@ -196,10 +213,10 @@ const PROTOCOLOS_DEFAULT = {
     pStep("densidad", "Tan Citrus", "0,025 g/L (25% de 0,10 g/L)", 1.000, 1.010),
     pStep("densidad", "Nutriferm Special", "0,025 g/L (25% de 0,10 g/L)", 1.000, 1.010),
   ],
-  tinto: [],
+  tinto: protocoloTinto("Levadura 71B", "Levadura 1118"),
   espumoso: [],
-  desgranado: [],
-  hormigon: [],
+  desgranado: protocoloTinto("Levadura (pendiente de indicar)", "Levadura (pendiente de indicar)"),
+  hormigon: protocoloTinto("Levadura (pendiente de indicar)", "Levadura (pendiente de indicar)"),
   rosado: [], // legacy
   mosto: [],  // legacy
 };
@@ -249,6 +266,9 @@ const calcularCantidad = (dosisTexto, litros) => {
   return {cantidad, unidad, estimado};
 };
 const fmtCantidad = c => c==null?"":(c.cantidad<10?c.cantidad.toFixed(2):Math.round(c.cantidad).toLocaleString("es-ES"))+" "+c.unidad+(c.estimado?" (estimado)":"");
+const textoMomento = step => step.momento==="densidad"
+  ? "densidad "+(step.densidadMin===step.densidadMax?step.densidadMin:step.densidadMin+"-"+step.densidadMax)
+  : "al inicio del lote";
 
 // Calcula la dosis equivalente (texto) a partir de una cantidad total añadida.
 // Usa la unidad de referencia (hL/L/kg) de la dosis teorica si existe; si no, asume hL.
@@ -470,6 +490,7 @@ export default function BodegaApp() {
   const [recordatoriosOcultos, setRecordatoriosOcultos] = useState([]); // ids de pasos de protocolo marcados "esperar" en esta sesion
   const [protoTipoSel, setProtoTipoSel] = useState("blanco");
   const [nuevoPaso,    setNuevoPaso]    = useState({momento:"inicio",producto:"",dosis:"",densidadMin:"",densidadMax:""});
+  const [editandoPasoId, setEditandoPasoId] = useState(null);
   const [verHistorialCompleto, setVerHistorialCompleto] = useState(false); // operacion seleccionada para ver/editar
   const [formMat,      setFormMat]      = useState({});
   const pdfRef = useRef(null);
@@ -909,7 +930,7 @@ export default function BodegaApp() {
                     <div key={step.id} style={{...S.card,borderColor:C.gold,background:"rgba(200,169,110,0.08)",marginBottom:6,padding:"10px 12px"}}>
                       <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{step.producto}</div>
                       <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
-                        {step.dosis}{step.momento==="densidad"?" · densidad "+step.densidadMin+"-"+step.densidadMax:" · al inicio del lote"}
+                        {step.dosis} · {textoMomento(step)}
                         {(()=>{const c=calcularCantidad(step.dosis,litros); return c?<span style={{color:C.gold,fontWeight:700}}> · Total: {fmtCantidad(c)}</span>:null;})()}
                       </div>
                       <div style={{display:"flex",gap:6}}>
@@ -2371,13 +2392,32 @@ export default function BodegaApp() {
       if(!window.confirm("¿Borrar este paso del protocolo?")) return;
       setProtocolos(prev=>({...prev,[protoTipoSel]:pasos.filter((_,i)=>i!==idx)}));
     };
-    const añadirPaso = () => {
+    const editarPaso = step => {
+      setEditandoPasoId(step.id);
+      setNuevoPaso({momento:step.momento, producto:step.producto, dosis:step.dosis,
+        densidadMin:step.densidadMin!=null?String(step.densidadMin):"", densidadMax:step.densidadMax!=null?String(step.densidadMax):""});
+    };
+    const cancelarEdicion = () => {
+      setEditandoPasoId(null);
+      setNuevoPaso({momento:"inicio",producto:"",dosis:"",densidadMin:"",densidadMax:""});
+    };
+    const guardarPaso = () => {
       if(!nuevoPaso.producto||!nuevoPaso.dosis) return;
       if(nuevoPaso.momento==="densidad"&&(!nuevoPaso.densidadMin||!nuevoPaso.densidadMax)) return;
-      const paso = {id:"p"+Date.now(), momento:nuevoPaso.momento, producto:nuevoPaso.producto, dosis:nuevoPaso.dosis,
-        ...(nuevoPaso.momento==="densidad"?{densidadMin:parseFloat(nuevoPaso.densidadMin),densidadMax:parseFloat(nuevoPaso.densidadMax)}:{})};
-      setProtocolos(prev=>({...prev,[protoTipoSel]:[...pasos,paso]}));
-      setNuevoPaso({momento:"inicio",producto:"",dosis:"",densidadMin:"",densidadMax:""});
+      const datos = {momento:nuevoPaso.momento, producto:nuevoPaso.producto, dosis:nuevoPaso.dosis,
+        ...(nuevoPaso.momento==="densidad"?{densidadMin:parseFloat(nuevoPaso.densidadMin),densidadMax:parseFloat(nuevoPaso.densidadMax)}:{densidadMin:undefined,densidadMax:undefined})};
+      if(editandoPasoId) {
+        setProtocolos(prev=>({...prev,[protoTipoSel]:pasos.map(p=>p.id===editandoPasoId?{...p,...datos}:p)}));
+      } else {
+        setProtocolos(prev=>({...prev,[protoTipoSel]:[...pasos,{id:"p"+Date.now(),...datos}]}));
+      }
+      cancelarEdicion();
+    };
+    const cargarSugerido = () => {
+      const sugerido = PROTOCOLOS_DEFAULT[protoTipoSel];
+      if(!sugerido||sugerido.length===0) return;
+      if(!window.confirm("Esto reemplaza TODOS los pasos actuales de "+protoTipoSel+" por el protocolo sugerido ("+sugerido.length+" pasos). ¿Continuar?")) return;
+      setProtocolos(prev=>({...prev,[protoTipoSel]:sugerido.map(s=>({...s}))}));
     };
     return (
       <div style={S.app}>
@@ -2387,7 +2427,7 @@ export default function BodegaApp() {
         <div style={S.body}>
           <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
             {TIPOS_VINO.map(([v,l])=>(
-              <button key={v} onClick={()=>setProtoTipoSel(v)}
+              <button key={v} onClick={()=>{setProtoTipoSel(v);cancelarEdicion();}}
                 style={{padding:"5px 14px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
                   border:"2px solid "+(protoTipoSel===v?C.gold:C.border),
                   background:protoTipoSel===v?"#1A2535":"transparent",
@@ -2397,16 +2437,20 @@ export default function BodegaApp() {
             ))}
           </div>
 
+          {PROTOCOLOS_DEFAULT[protoTipoSel]?.length>0&&
+            <Btn variant="ghost" small onClick={cargarSugerido}>Cargar protocolo sugerido ({PROTOCOLOS_DEFAULT[protoTipoSel].length} pasos)</Btn>}
+
           <div style={S.sec}>Pasos ({pasos.length})</div>
           {pasos.length===0&&<div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"16px"}}>Sin pasos definidos para {protoTipoSel}</div>}
           {pasos.map((step,idx)=>(
-            <div key={step.id} style={{...S.card,marginBottom:6,padding:"10px 12px"}}>
+            <div key={step.id} style={{...S.card,marginBottom:6,padding:"10px 12px",...(editandoPasoId===step.id?{borderColor:C.gold}:{})}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                 <div>
                   <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{idx+1}. {step.producto}</div>
-                  <div style={{fontSize:12,color:C.muted}}>{step.dosis} · {step.momento==="densidad"?"densidad "+step.densidadMin+"-"+step.densidadMax:"al inicio del lote"}</div>
+                  <div style={{fontSize:12,color:C.muted}}>{step.dosis} · {textoMomento(step)}</div>
                 </div>
                 <div style={{display:"flex",gap:4}}>
+                  <button onClick={()=>editarPaso(step)} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:14}}>✎</button>
                   <button onClick={()=>moverPaso(idx,-1)} disabled={idx===0} style={{background:"none",border:"none",color:idx===0?C.border:C.muted,cursor:idx===0?"default":"pointer",fontSize:16}}>↑</button>
                   <button onClick={()=>moverPaso(idx,1)} disabled={idx===pasos.length-1} style={{background:"none",border:"none",color:idx===pasos.length-1?C.border:C.muted,cursor:idx===pasos.length-1?"default":"pointer",fontSize:16}}>↓</button>
                   <button onClick={()=>borrarPaso(idx)} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:14}}>✕</button>
@@ -2415,7 +2459,10 @@ export default function BodegaApp() {
             </div>
           ))}
 
-          <div style={{...S.sec,marginTop:20}}>Añadir paso</div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:20,marginBottom:8}}>
+            <div style={{...S.sec,marginTop:0}}>{editandoPasoId?"Editar paso":"Añadir paso"}</div>
+            {editandoPasoId&&<Btn variant="ghost" small onClick={cancelarEdicion}>Cancelar</Btn>}
+          </div>
           <div style={S.card}>
             <label style={S.label}>Momento</label>
             <div style={{display:"flex",gap:6,marginBottom:10}}>
@@ -2443,7 +2490,7 @@ export default function BodegaApp() {
             <input type="text" style={S.input} placeholder="Nombre del producto" value={nuevoPaso.producto} onChange={e=>setNuevoPaso(p=>({...p,producto:e.target.value}))}/>
             <label style={S.label}>Dosis</label>
             <input type="text" style={{...S.input,marginBottom:12}} placeholder="ej. 20 g/hL" value={nuevoPaso.dosis} onChange={e=>setNuevoPaso(p=>({...p,dosis:e.target.value}))}/>
-            <Btn variant="gold" full onClick={añadirPaso}>+ Añadir paso a {protoTipoSel}</Btn>
+            <Btn variant="gold" full onClick={guardarPaso}>{editandoPasoId?"Guardar cambios":"+ Añadir paso a "+protoTipoSel}</Btn>
           </div>
         </div>
         <TabBar tab={tab} setTab={setTab}/>
