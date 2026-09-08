@@ -887,8 +887,8 @@ export default function BodegaApp() {
             const diaDe = fecha => fechaInicio ? Math.round((new Date(fecha)-new Date(fechaInicio))/86400000) : 0;
 
             const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha), densidad:densOk(o.densidad)})).filter(d=>!isNaN(d.dia)&&!isNaN(d.densidad));
-            const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? parseFloat(dep.curvaInicial) : null;
-            const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? parseFloat(dep.curvaObjetivo) : null;
+            const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densOk(dep.curvaInicial) : null;
+            const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densOk(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
             const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? [{dia:0,densidad:cInicial},{dia:cDias,densidad:cObjetivo}] : [];
             const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), 1);
