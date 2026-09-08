@@ -940,6 +940,35 @@ export default function BodegaApp() {
                     setVista("nueva_op");
                   }}>+ Producto</Btn>
                 </div>
+
+                {(()=>{
+                  // Total acumulado por producto (suma de todos los aportes de este lote)
+                  const resumen = {};
+                  opsProductos.forEach(op=>{
+                    const c = calcularCantidad(op.dosisReal||op.dosisTeorica||op.dosis, litros);
+                    if(!c) return;
+                    const key = (op.producto||"")+"|"+c.unidad;
+                    if(!resumen[key]) resumen[key] = {producto:op.producto, unidad:c.unidad, total:0, veces:0, estimado:c.estimado};
+                    resumen[key].total += c.cantidad;
+                    resumen[key].veces += 1;
+                  });
+                  const filas = Object.values(resumen);
+                  if(filas.length===0) return null;
+                  return (
+                    <div style={{...S.card,marginBottom:10}}>
+                      <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Total añadido por producto (este lote)</div>
+                      {filas.map(r=>(
+                        <div key={r.producto+r.unidad} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0"}}>
+                          <span>{r.producto}{r.veces>1?" ("+r.veces+" aportes)":""}</span>
+                          <span style={{fontWeight:700,color:C.gold}}>
+                            {r.total<10?r.total.toFixed(2):Math.round(r.total).toLocaleString("es-ES")} {r.unidad}{r.estimado?" (estimado)":""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
                 {opsProductos.length===0&&<div style={{...S.card,color:C.muted,fontSize:13,textAlign:"center",padding:"16px"}}>Sin productos registrados en este lote</div>}
                 {opsProductos.map(op=>(
                   <div key={op.id} onClick={()=>setSelOp(op)} style={{...S.card,marginBottom:6,padding:"10px 12px",cursor:"pointer"}}>
