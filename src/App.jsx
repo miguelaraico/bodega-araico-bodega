@@ -918,9 +918,14 @@ export default function BodegaApp() {
               .filter(o=>((o.depId===dep.id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===dep.id&&o.tipo==="trasiego"))&&o.fecha<=fechaConsulta)
               .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
             const fechaInicio = entradaLote?.fecha || (opsFermentacion[0]?.fecha) || null;
-            const diaDe = fecha => fechaInicio ? Math.round((new Date(fecha)-new Date(fechaInicio))/86400000) : 0;
+            const diaDe = (fecha, hora) => {
+              if(!fechaInicio) return 0;
+              const t = new Date(fecha+"T"+(hora||"12:00")+":00").getTime();
+              const t0 = new Date(fechaInicio+"T00:00:00").getTime();
+              return (t-t0)/86400000;
+            };
 
-            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha), densidad:densOk(o.densidad)})).filter(d=>!isNaN(d.dia)&&!isNaN(d.densidad));
+            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:densOk(o.densidad)})).filter(d=>!isNaN(d.dia)&&!isNaN(d.densidad));
             const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densOk(dep.curvaInicial) : null;
             const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densOk(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
