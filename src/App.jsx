@@ -991,15 +991,15 @@ export default function BodegaApp() {
                   <div style={{display:"flex",gap:8,marginBottom:12}}>
                     <div style={{flex:1}}>
                       <label style={S.label}>Densidad inicial</label>
-                      <input type="text" inputMode="decimal" style={S.input} placeholder="1.090" value={dep.curvaInicial||""} onChange={e=>setCurva("curvaInicial",normDensidad(e.target.value))}/>
+                      <input type="text" inputMode="decimal" style={S.input} value={dep.curvaInicial||""} onChange={e=>setCurva("curvaInicial",normDensidad(e.target.value))}/>
                     </div>
                     <div style={{flex:1}}>
                       <label style={S.label}>Densidad objetivo</label>
-                      <input type="text" inputMode="decimal" style={S.input} placeholder="0.995" value={dep.curvaObjetivo||""} onChange={e=>setCurva("curvaObjetivo",normDensidad(e.target.value))}/>
+                      <input type="text" inputMode="decimal" style={S.input} value={dep.curvaObjetivo||""} onChange={e=>setCurva("curvaObjetivo",normDensidad(e.target.value))}/>
                     </div>
                     <div style={{flex:1}}>
                       <label style={S.label}>Dias estimados</label>
-                      <input type="number" style={S.input} placeholder="10" value={dep.curvaDias||""} onChange={e=>setCurva("curvaDias",e.target.value)}/>
+                      <input type="number" style={S.input} value={dep.curvaDias||""} onChange={e=>setCurva("curvaDias",e.target.value)}/>
                     </div>
                   </div>
                   {(realData.length>0||teoricaData.length>0) ? (
@@ -2529,11 +2529,11 @@ export default function BodegaApp() {
             {nuevoPaso.momento==="densidad"&&<div style={{display:"flex",gap:8,marginBottom:10}}>
               <div style={{flex:1}}>
                 <label style={S.label}>Densidad min</label>
-                <input type="text" inputMode="decimal" style={S.input} placeholder="1.020" value={nuevoPaso.densidadMin} onChange={e=>setNuevoPaso(p=>({...p,densidadMin:normDensidad(e.target.value)}))}/>
+                <input type="text" inputMode="decimal" style={S.input} value={nuevoPaso.densidadMin} onChange={e=>setNuevoPaso(p=>({...p,densidadMin:normDensidad(e.target.value)}))}/>
               </div>
               <div style={{flex:1}}>
                 <label style={S.label}>Densidad max</label>
-                <input type="text" inputMode="decimal" style={S.input} placeholder="1.030" value={nuevoPaso.densidadMax} onChange={e=>setNuevoPaso(p=>({...p,densidadMax:normDensidad(e.target.value)}))}/>
+                <input type="text" inputMode="decimal" style={S.input} value={nuevoPaso.densidadMax} onChange={e=>setNuevoPaso(p=>({...p,densidadMax:normDensidad(e.target.value)}))}/>
               </div>
             </div>}
             <label style={S.label}>Producto</label>
