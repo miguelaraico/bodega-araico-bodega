@@ -274,6 +274,21 @@ const calcularCantidad = (dosisTexto, litros, kgReal) => {
   return {cantidad, unidad, estimado};
 };
 const fmtCantidad = c => c==null?"":(c.cantidad<10?c.cantidad.toFixed(2):Math.round(c.cantidad).toLocaleString("es-ES"))+" "+c.unidad+(c.estimado?" (estimado)":"");
+// Curva teorica de cinetica de fermentacion: sigmoide (lenta-rapida-lenta), no una recta.
+// Genera un punto por dia entre densidad inicial y objetivo a lo largo de "dias".
+const curvaCinetica = (inicial, objetivo, dias) => {
+  if(!dias||dias<=0) return [{dia:0,densidad:inicial}];
+  const k = 10/dias; // pendiente de la "S": mayor dias -> curva mas suave
+  const tMid = dias/2;
+  const sig = t => 1/(1+Math.exp(-k*(t-tMid)));
+  const s0 = sig(0), s1 = sig(dias);
+  const puntos = [];
+  for(let d=0; d<=Math.round(dias); d++){
+    const s = (sig(d)-s0)/(s1-s0);
+    puntos.push({dia:d, densidad: inicial-(inicial-objetivo)*s});
+  }
+  return puntos;
+};
 const textoMomento = step => step.momento==="densidad"
   ? "densidad "+(step.densidadMin===step.densidadMax?step.densidadMin:step.densidadMin+"-"+step.densidadMax)
   : "al inicio del lote";
@@ -909,14 +924,14 @@ export default function BodegaApp() {
             const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densOk(dep.curvaInicial) : null;
             const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densOk(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
-            const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? [{dia:0,densidad:cInicial},{dia:cDias,densidad:cObjetivo}] : [];
+            const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? curvaCinetica(cInicial, cObjetivo, cDias) : [];
             const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), 1);
             // Dataset combinado (un unico array para el LineChart) para que ambas lineas se dibujen bien
-            const diasCombinados = Array.from(new Set([0, ...(teoricaData.length>0?[cDias]:[]), ...realData.map(d=>d.dia)])).sort((a,b)=>a-b);
+            const diasCombinados = Array.from(new Set([...teoricaData.map(d=>d.dia), ...realData.map(d=>d.dia)])).sort((a,b)=>a-b);
             const chartData = diasCombinados.map(dia=>({
               dia,
               real: realData.find(d=>d.dia===dia)?.densidad ?? null,
-              teorica: dia===0&&teoricaData.length>0 ? cInicial : (dia===cDias&&teoricaData.length>0 ? cObjetivo : null),
+              teorica: teoricaData.find(d=>d.dia===dia)?.densidad ?? null,
             }));
 
             const setCurva = (campo,valor) => {
@@ -997,7 +1012,7 @@ export default function BodegaApp() {
                           <YAxis domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
                           <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}/>
                           <Legend wrapperStyle={{fontSize:11}}/>
-                          {teoricaData.length>0&&<Line dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="linear" connectNulls isAnimationActive={false}/>}
+                          {teoricaData.length>0&&<Line dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
                           {realData.length>0&&<Line dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
                         </LineChart>
                       </ResponsiveContainer>
