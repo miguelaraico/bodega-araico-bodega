@@ -579,6 +579,7 @@ export default function BodegaApp() {
     const entradas = operaciones
       .filter(o=>o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
       .concat(operaciones.filter(o=>(o.depDestino===id||o.depDestino2===id)&&o.tipo==="trasiego"))
+      .filter(o=>esInicioDeLote(o,id))
       .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
 
     if(entradas.length===0) return {tipoVino:"",anada:"",etiqueta:""};
@@ -622,6 +623,17 @@ export default function BodegaApp() {
     return operaciones.filter(o=>o.depId===id&&o.tipo==="vendimia"&&o.fecha<=hasta).reduce((s,o)=>s+parseFloat(o.kg||0),0);
   };
 
+  // Una entrada (vendimia/llenado/entrada_granel/trasiego) solo cuenta como INICIO de lote
+  // si el deposito estaba vacio (sin litros ni kg de vendimia) el dia anterior. Si ya tenia
+  // contenido, es un aporte al mismo lote, no un lote nuevo (evita "olvidar" el seguimiento
+  // de fermentacion al meter una entrada a granel de mas en un deposito ya en marcha).
+  const esInicioDeLote = (op, id) => {
+    const d = new Date(op.fecha+"T00:00:00");
+    d.setDate(d.getDate()-1);
+    const antes = d.toISOString().slice(0,10);
+    return litrosActuales(id, antes)<=0 && kgVendimiaDe(id, antes)<=0;
+  };
+
   const histDep = (id, hastaFecha, soloActual) => {
     const hasta = hastaFecha || "9999-12-31";
     let ops = operaciones
@@ -631,7 +643,7 @@ export default function BodegaApp() {
     if(soloActual) {
       // Encontrar la fecha de la ultima entrada (llenado, vendimia o trasiego recibido)
       const ultimaEntrada = operaciones
-        .filter(o=>(o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===id&&o.tipo==="trasiego"))
+        .filter(o=>((o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===id&&o.tipo==="trasiego"))&&esInicioDeLote(o,id))
         .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
       if(ultimaEntrada) {
         ops = ops.filter(o=>o.fecha>=ultimaEntrada.fecha);
@@ -915,7 +927,7 @@ export default function BodegaApp() {
 
             // Dia 0 = fecha de entrada del lote actual (vendimia/llenado/entrada_granel/trasiego recibido)
             const entradaLote = operaciones
-              .filter(o=>((o.depId===dep.id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===dep.id&&o.tipo==="trasiego"))&&o.fecha<=fechaConsulta)
+              .filter(o=>((o.depId===dep.id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===dep.id&&o.tipo==="trasiego"))&&o.fecha<=fechaConsulta&&esInicioDeLote(o,dep.id))
               .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
             const fechaInicio = entradaLote?.fecha || (opsFermentacion[0]?.fecha) || null;
             const diaDe = (fecha, hora) => {
