@@ -1249,7 +1249,7 @@ export default function BodegaApp() {
           etiqueta: etiqProvisional,
         }:d));
       }
-      if(f.tipo==="prensado"&&f.depDestino&&f.litros) {
+      if(!f._editandoId && f.tipo==="prensado"&&f.depDestino&&f.litros) {
         const depOrigen = depositos.find(d=>d.id===f.depId);
         // Crear operacion de llenado en el deposito destino
         const opLlenado = {
@@ -1898,9 +1898,15 @@ export default function BodegaApp() {
         </div>
         {/* Contador orujos */}
         {orujos>0&&(
-          <div style={{background:"#1A1A0A",borderBottom:"1px solid #5A4A1A",padding:"8px 16px",
-            display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontSize:12,color:"#A0862A"}}>🫙 Orujo acumulado</div>
+          <div onClick={()=>{
+              const nuevo = window.prompt("Corregir total de orujo acumulado (kg):", orujos);
+              if(nuevo===null) return;
+              const val = parseFloat(nuevo.replace(",","."));
+              if(!isNaN(val)&&val>=0) setOrujos(val);
+            }}
+            style={{background:"#1A1A0A",borderBottom:"1px solid #5A4A1A",padding:"8px 16px",
+            display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <div style={{fontSize:12,color:"#A0862A"}}>🫙 Orujo acumulado (toca para corregir)</div>
             <div style={{fontSize:16,fontWeight:700,color:"#C8A050"}}>{orujos.toLocaleString("es-ES")} kg</div>
           </div>
         )}
