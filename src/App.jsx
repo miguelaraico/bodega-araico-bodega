@@ -960,7 +960,11 @@ export default function BodegaApp() {
             // Solo se muestran si el lote empezo hace poco (fermentacion probablemente en curso);
             // pasado ese margen se asume terminada y no tiene sentido seguir preguntando.
             const diasDesdeInicio = fechaInicio ? (new Date(fechaConsulta+"T00:00:00")-new Date(fechaInicio+"T00:00:00"))/86400000 : Infinity;
-            const loteReciente = diasDesdeInicio<=45;
+            const loteReciente = diasDesdeInicio<=45 && !dep.fermentacionTerminada;
+            const marcarTerminada = terminada => {
+              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,fermentacionTerminada:terminada}:b));
+              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,fermentacionTerminada:terminada}:d));
+            };
             const currentDensidad = opsFermentacion.length>0 ? densOk(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
             const protocoloActivo = loteReciente ? (protocolos[dep.tipoVino||""] || []) : [];
             const omitidos = dep.protocoloOmitidos || [];
@@ -988,7 +992,15 @@ export default function BodegaApp() {
 
             return (
               <>
-                <div style={S.sec}>Fermentacion</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{...S.sec,marginBottom:0}}>Fermentacion</div>
+                  {dep.fermentacionTerminada ? (
+                    <Btn variant="ghost" small onClick={()=>marcarTerminada(false)}>✓ Terminada (reabrir)</Btn>
+                  ) : (
+                    <Btn variant="ghost" small onClick={()=>marcarTerminada(true)}>Marcar como terminada</Btn>
+                  )}
+                </div>
+                <div style={{height:8}}/>
 
                 {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
                   {pasosPendientes.map(step=>(
@@ -1427,7 +1439,7 @@ export default function BodegaApp() {
         // Limpiar origen si queda vacio (usando litros calculados ANTES del trasiego)
         const totalSale = parseFloat(f.litros||0) + parseFloat(f.litros2||0);
         if(depOrigen&&!depOrigen.siempreLleno&&litrosOrigenAntes-totalSale<=0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null,curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[]}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",campaniaInicio:null,curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[],fermentacionTerminada:false}:d));
         }
       }
 
@@ -1449,7 +1461,7 @@ export default function BodegaApp() {
           if(!f._editandoId) {/* ya se añadió arriba */}
         }
         if(litrosAntes - litrosTras - merma <= 0) {
-          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[]}:d));
+          setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[],fermentacionTerminada:false}:d));
         }
       }
 
