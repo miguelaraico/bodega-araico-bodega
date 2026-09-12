@@ -990,15 +990,20 @@ export default function BodegaApp() {
               setVista("nueva_op");
             };
 
+            if(dep.fermentacionTerminada) {
+              return (
+                <div onClick={()=>marcarTerminada(false)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                  <span style={{fontSize:13,color:C.muted}}>🏁 Fermentacion terminada</span>
+                  <span style={{fontSize:12,color:C.accent,fontWeight:700}}>Reabrir</span>
+                </div>
+              );
+            }
+
             return (
               <>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{...S.sec,marginBottom:0}}>Fermentacion</div>
-                  {dep.fermentacionTerminada ? (
-                    <Btn variant="ghost" small onClick={()=>marcarTerminada(false)}>✓ Terminada (reabrir)</Btn>
-                  ) : (
-                    <Btn variant="ghost" small onClick={()=>marcarTerminada(true)}>Marcar como terminada</Btn>
-                  )}
+                  <Btn variant="ghost" small onClick={()=>marcarTerminada(true)}>Marcar como terminada</Btn>
                 </div>
                 <div style={{height:8}}/>
 
