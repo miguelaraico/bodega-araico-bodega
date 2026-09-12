@@ -956,9 +956,13 @@ export default function BodegaApp() {
               else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,[campo]:valor}:d));
             };
 
-            // Protocolo de aditivos para el tipo de vino de este lote: pasos pendientes segun densidad actual
+            // Protocolo de aditivos para el tipo de vino de este lote: pasos pendientes segun densidad actual.
+            // Solo se muestran si el lote empezo hace poco (fermentacion probablemente en curso);
+            // pasado ese margen se asume terminada y no tiene sentido seguir preguntando.
+            const diasDesdeInicio = fechaInicio ? (new Date(fechaConsulta+"T00:00:00")-new Date(fechaInicio+"T00:00:00"))/86400000 : Infinity;
+            const loteReciente = diasDesdeInicio<=45;
             const currentDensidad = opsFermentacion.length>0 ? densOk(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
-            const protocoloActivo = protocolos[dep.tipoVino||""] || [];
+            const protocoloActivo = loteReciente ? (protocolos[dep.tipoVino||""] || []) : [];
             const omitidos = dep.protocoloOmitidos || [];
             const pasosPendientes = protocoloActivo.filter(step=>{
               if(omitidos.includes(step.id)) return false;
