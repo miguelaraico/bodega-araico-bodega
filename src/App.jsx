@@ -1093,6 +1093,58 @@ export default function BodegaApp() {
             );
           })()}
 
+          {/* Evolucion de analisis */}
+          {(()=>{
+            const histAnalisis = histDep(dep.id, fechaConsulta, true).filter(o=>o.tipo==="analisis").sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id);
+            if(histAnalisis.length===0) return null;
+            const campos = [
+              ["alcohol","Grado alcoholico probable","%"],
+              ["ph","pH",""],
+              ["acidez","Ac. total tartarica","g/L"],
+              ["acidezV","Ac. acetico","g/L"],
+              ["acidoMalico","Ac. L-Malico","g/L"],
+              ["so2libre","SO2 libre","mg/L"],
+              ["so2total","SO2 total","mg/L"],
+              ["azucares","Azucares","g/L"],
+            ];
+            const ordenDesc = histAnalisis.slice().reverse();
+            return (
+              <>
+                <div style={S.sec}>Evolucion de analisis{histAnalisis.length>1?" ("+histAnalisis.length+")":""}</div>
+                {ordenDesc.map((op,idx)=>{
+                  const anterior = ordenDesc[idx+1];
+                  const camposConValor = campos.filter(([campo])=>op[campo]!=null&&op[campo]!=="");
+                  return (
+                    <div key={op.id} onClick={()=>setSelOp(op)} style={{...S.card,marginBottom:8,padding:"10px 12px",cursor:"pointer"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                        <span style={{fontSize:13,fontWeight:700,color:C.gold}}>Analisis{op.nInforme?" · Nº "+op.nInforme:""}</span>
+                        <span style={{fontSize:11,color:C.muted}}>{fmtF(op.fecha)}</span>
+                      </div>
+                      {camposConValor.length===0 ? (
+                        <div style={{fontSize:12,color:C.muted}}>Sin parametros registrados</div>
+                      ) : (
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"3px 12px"}}>
+                          {camposConValor.map(([campo,label,unidad])=>{
+                            const val = parseFloat(op[campo]);
+                            const prevVal = anterior&&anterior[campo]!=null&&anterior[campo]!==""?parseFloat(anterior[campo]):null;
+                            const delta = prevVal!=null&&!isNaN(val)&&!isNaN(prevVal) ? val-prevVal : null;
+                            return (
+                              <div key={campo} style={{fontSize:12,color:C.muted}}>
+                                {label}: <span style={{color:C.text,fontWeight:600}}>{op[campo]}{unidad?" "+unidad:""}</span>
+                                {delta!=null&&Math.abs(delta)>0.001&&
+                                  <span style={{color:C.gold,marginLeft:4,fontSize:11}}>({delta>0?"+":""}{delta.toFixed(2)})</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            );
+          })()}
+
           {/* Historial */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,marginTop:16}}>
             <div style={S.sec}>Historial</div>
@@ -1184,12 +1236,14 @@ export default function BodegaApp() {
                 {selOp.temperatura&&<div style={S.row}><span style={{color:C.muted}}>Temperatura</span><span style={{fontWeight:700,color:C.gold}}>{selOp.temperatura} C</span></div>}
                 {selOp.hora&&<div style={S.row}><span style={{color:C.muted}}>Hora</span><span>{selOp.hora}</span></div>}
                 {selOp.ph&&<div style={S.row}><span style={{color:C.muted}}>pH</span><span style={{fontWeight:700}}>{selOp.ph}</span></div>}
-                {selOp.acidez&&<div style={S.row}><span style={{color:C.muted}}>Acidez total</span><span>{selOp.acidez} g/L</span></div>}
-                {selOp.alcohol&&<div style={S.row}><span style={{color:C.muted}}>Alcohol</span><span>{selOp.alcohol} %</span></div>}
-                {selOp.acidezV&&<div style={S.row}><span style={{color:C.muted}}>Acidez volatil</span><span>{selOp.acidezV} g/L</span></div>}
+                {selOp.alcohol&&<div style={S.row}><span style={{color:C.muted}}>Grado alcoholico probable</span><span>{selOp.alcohol} %</span></div>}
+                {selOp.acidez&&<div style={S.row}><span style={{color:C.muted}}>Ac. total tartarica</span><span>{selOp.acidez} g/L</span></div>}
+                {selOp.acidezV&&<div style={S.row}><span style={{color:C.muted}}>Ac. acetico</span><span>{selOp.acidezV} g/L</span></div>}
+                {selOp.acidoMalico&&<div style={S.row}><span style={{color:C.muted}}>Ac. L-Malico</span><span>{selOp.acidoMalico} g/L</span></div>}
                 {selOp.so2libre&&<div style={S.row}><span style={{color:C.muted}}>SO2 libre</span><span>{selOp.so2libre} mg/L</span></div>}
                 {selOp.so2total&&<div style={S.row}><span style={{color:C.muted}}>SO2 total</span><span>{selOp.so2total} mg/L</span></div>}
                 {selOp.azucares&&<div style={S.row}><span style={{color:C.muted}}>Azucares</span><span>{selOp.azucares} g/L</span></div>}
+                {selOp.nInforme&&<div style={S.row}><span style={{color:C.muted}}>Nº informe</span><span>{selOp.nInforme}</span></div>}
                 {selOp.producto&&<div style={S.row}><span style={{color:C.muted}}>Producto</span><span>{selOp.producto}</span></div>}
                 {selOp.dosisTeorica&&<div style={S.row}><span style={{color:C.muted}}>Dosis teorica</span><span>{selOp.dosisTeorica}</span></div>}
                 {selOp.dosisReal&&<div style={S.row}><span style={{color:C.muted}}>Dosis real</span><span style={{fontWeight:700,color:C.accent}}>{selOp.dosisReal}</span></div>}
@@ -1735,17 +1789,23 @@ export default function BodegaApp() {
           {/* Analisis */}
           {esAnalisis&&<>
             <div style={{display:"flex",gap:8}}>
+              <div style={{flex:1}}><label style={S.label}>Grado alcohólico probable (%)</label><input type="number" step="0.1" style={S.input} placeholder="13.5" value={f.alcohol||""} onChange={e=>set("alcohol",e.target.value)}/></div>
               <div style={{flex:1}}><label style={S.label}>pH</label><input type="number" step="0.01" style={S.input} placeholder="3.50" value={f.ph||""} onChange={e=>set("ph",e.target.value)}/></div>
-              <div style={{flex:1}}><label style={S.label}>Acidez total</label><input type="number" step="0.1" style={S.input} placeholder="5.5" value={f.acidez||""} onChange={e=>set("acidez",e.target.value)}/></div>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <div style={{flex:1}}><label style={S.label}>Alcohol %</label><input type="number" step="0.1" style={S.input} placeholder="13.5" value={f.alcohol||""} onChange={e=>set("alcohol",e.target.value)}/></div>
-              <div style={{flex:1}}><label style={S.label}>Acid. volatil</label><input type="number" step="0.01" style={S.input} placeholder="0.45" value={f.acidezV||""} onChange={e=>set("acidezV",e.target.value)}/></div>
+              <div style={{flex:1}}><label style={S.label}>Ac. total tartarica (g/l)</label><input type="number" step="0.1" style={S.input} placeholder="5.5" value={f.acidez||""} onChange={e=>set("acidez",e.target.value)}/></div>
+              <div style={{flex:1}}><label style={S.label}>Ac. acetico (g/l)</label><input type="number" step="0.01" style={S.input} placeholder="0.45" value={f.acidezV||""} onChange={e=>set("acidezV",e.target.value)}/></div>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <div style={{flex:1}}><label style={S.label}>SO2 libre</label><input type="number" style={S.input} placeholder="35" value={f.so2libre||""} onChange={e=>set("so2libre",e.target.value)}/></div>
-              <div style={{flex:1}}><label style={S.label}>SO2 total</label><input type="number" style={S.input} placeholder="80" value={f.so2total||""} onChange={e=>set("so2total",e.target.value)}/></div>
+              <div style={{flex:1}}><label style={S.label}>Ac. L-Malico (g/l)</label><input type="number" step="0.1" style={S.input} placeholder="1.4" value={f.acidoMalico||""} onChange={e=>set("acidoMalico",e.target.value)}/></div>
+              <div style={{flex:1}}><label style={S.label}>Azucares (g/l)</label><input type="number" step="0.1" style={S.input} placeholder="207" value={f.azucares||""} onChange={e=>set("azucares",e.target.value)}/></div>
             </div>
+            <div style={{display:"flex",gap:8}}>
+              <div style={{flex:1}}><label style={S.label}>SO2 libre (mg/l)</label><input type="number" style={S.input} placeholder="35" value={f.so2libre||""} onChange={e=>set("so2libre",e.target.value)}/></div>
+              <div style={{flex:1}}><label style={S.label}>SO2 total (mg/l)</label><input type="number" style={S.input} placeholder="80" value={f.so2total||""} onChange={e=>set("so2total",e.target.value)}/></div>
+            </div>
+            <label style={S.label}>Nº informe (opcional)</label>
+            <input type="text" style={S.input} placeholder="2604426" value={f.nInforme||""} onChange={e=>set("nInforme",e.target.value)}/>
           </>}
 
           {/* Embotellado */}
