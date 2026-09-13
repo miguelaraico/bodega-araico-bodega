@@ -1076,16 +1076,25 @@ export default function BodegaApp() {
                 </div>
 
                 {(()=>{
-                  // Total acumulado por producto (suma de todos los aportes de este lote)
+                  // Total acumulado por producto (suma de todos los aportes de este lote).
+                  // g y kg se convierten a una base comun (gramos) para poder sumarlos aunque
+                  // se hayan registrado con unidades distintas en cada aporte.
                   const cantidadDeOp = op => op.cantidadReal ? {cantidad:parseFloat(op.cantidadReal), unidad:op.unidadReal||"g", estimado:false} : calcularCantidad(op.dosisReal||op.dosisTeorica||op.dosis, litros, kgVendimia);
                   const resumen = {};
                   opsProductos.forEach(op=>{
                     const c = cantidadDeOp(op);
                     if(!c) return;
-                    const key = normProducto(op.producto)+"|"+c.unidad;
-                    if(!resumen[key]) resumen[key] = {producto:op.producto, unidad:c.unidad, total:0, veces:0, estimado:c.estimado};
-                    resumen[key].total += c.cantidad;
+                    const esMasa = c.unidad==="g"||c.unidad==="kg";
+                    const unidadBase = esMasa ? "g" : c.unidad;
+                    const cantidadBase = c.unidad==="kg" ? c.cantidad*1000 : c.cantidad;
+                    const key = normProducto(op.producto)+"|"+unidadBase;
+                    if(!resumen[key]) resumen[key] = {producto:op.producto, unidad:unidadBase, total:0, veces:0, estimado:c.estimado};
+                    resumen[key].total += cantidadBase;
                     resumen[key].veces += 1;
+                  });
+                  // Si el total en gramos es grande, mostrar en kg para que se lea mejor
+                  Object.values(resumen).forEach(r=>{
+                    if(r.unidad==="g"&&r.total>=1000){ r.total = r.total/1000; r.unidad = "kg"; }
                   });
                   const filas = Object.values(resumen);
                   if(filas.length===0) return null;
