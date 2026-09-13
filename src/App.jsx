@@ -922,7 +922,7 @@ export default function BodegaApp() {
             const isBarrica = barricas.some(b=>b.id===dep.id);
             // Historial del lote actual, siempre (independiente del toggle "ver historial completo")
             const histLoteActual = histDep(dep.id, fechaConsulta, true);
-            const opsFermentacion = histLoteActual.filter(o=>o.tipo==="fermentacion"&&o.densidad).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id);
+            const opsFermentacion = histLoteActual.filter(o=>o.tipo==="fermentacion"&&(o.densidad||o.temperatura)).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id);
             const opsProductos = histLoteActual.filter(o=>["aditivo_fermentacion","sulfitado","clarificacion","filtracion","acidez","azucar"].includes(o.tipo)).sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
 
             // Dia 0 = fecha de entrada del lote actual (vendimia/llenado/entrada_granel/trasiego recibido)
@@ -937,18 +937,20 @@ export default function BodegaApp() {
               return (t-t0)/86400000;
             };
 
-            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:densOk(o.densidad)})).filter(d=>!isNaN(d.dia)&&!isNaN(d.densidad));
+            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:o.densidad?densOk(o.densidad):null})).filter(d=>!isNaN(d.dia)&&d.densidad!=null&&!isNaN(d.densidad));
+            const tempData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), temperatura:o.temperatura!=null&&o.temperatura!==""?parseFloat(o.temperatura):null})).filter(d=>!isNaN(d.dia)&&d.temperatura!=null&&!isNaN(d.temperatura));
             const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densOk(dep.curvaInicial) : null;
             const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densOk(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
             const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? curvaCinetica(cInicial, cObjetivo, cDias) : [];
-            const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), 1);
-            // Dataset combinado (un unico array para el LineChart) para que ambas lineas se dibujen bien
-            const diasCombinados = Array.from(new Set([...teoricaData.map(d=>d.dia), ...realData.map(d=>d.dia)])).sort((a,b)=>a-b);
+            const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), ...tempData.map(d=>d.dia), 1);
+            // Dataset combinado (un unico array para el LineChart) para que las lineas se dibujen bien
+            const diasCombinados = Array.from(new Set([...teoricaData.map(d=>d.dia), ...realData.map(d=>d.dia), ...tempData.map(d=>d.dia)])).sort((a,b)=>a-b);
             const chartData = diasCombinados.map(dia=>({
               dia,
               real: realData.find(d=>d.dia===dia)?.densidad ?? null,
               teorica: teoricaData.find(d=>d.dia===dia)?.densidad ?? null,
+              temp: tempData.find(d=>d.dia===dia)?.temperatura ?? null,
             }));
 
             const setCurva = (campo,valor) => {
@@ -1040,23 +1042,25 @@ export default function BodegaApp() {
                       <input type="number" style={S.input} value={dep.curvaDias||""} onChange={e=>setCurva("curvaDias",e.target.value)}/>
                     </div>
                   </div>
-                  {(realData.length>0||teoricaData.length>0) ? (
+                  {(realData.length>0||teoricaData.length>0||tempData.length>0) ? (
                     <div style={{width:"100%",height:220}}>
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData} margin={{top:5,right:10,left:-10,bottom:5}}>
                           <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                           <XAxis dataKey="dia" type="number" domain={[0,maxDia]} allowDecimals={false}
                             tick={{fill:C.muted,fontSize:11}} label={{value:"Dia",position:"insideBottom",offset:-3,fill:C.muted,fontSize:11}}/>
-                          <YAxis domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
+                          <YAxis yAxisId="densidad" domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
+                          {tempData.length>0&&<YAxis yAxisId="temp" orientation="right" domain={["auto","auto"]} tick={{fill:"#D98A3D",fontSize:11}} width={35} label={{value:"°C",position:"insideTopRight",fill:"#D98A3D",fontSize:10}}/>}
                           <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}/>
                           <Legend wrapperStyle={{fontSize:11}}/>
-                          {teoricaData.length>0&&<Line dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
-                          {realData.length>0&&<Line dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {teoricaData.length>0&&<Line yAxisId="densidad" dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {realData.length>0&&<Line yAxisId="densidad" dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {tempData.length>0&&<Line yAxisId="temp" dataKey="temp" name="Temperatura" stroke="#D98A3D" strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
                   ) : (
-                    <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>Rellena la curva teorica y/o registra densidades reales para ver el grafico</div>
+                    <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>Rellena la curva teorica y/o registra densidades/temperaturas reales para ver el grafico</div>
                   )}
                 </div>
 
