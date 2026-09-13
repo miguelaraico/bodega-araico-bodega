@@ -941,7 +941,7 @@ export default function BodegaApp() {
             };
 
             const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:o.densidad?densOk(o.densidad):null})).filter(d=>!isNaN(d.dia)&&d.densidad!=null&&!isNaN(d.densidad));
-            const tempData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), temperatura:o.temperatura!=null&&o.temperatura!==""?parseFloat(o.temperatura):null})).filter(d=>!isNaN(d.dia)&&d.temperatura!=null&&!isNaN(d.temperatura));
+            const tempData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), temperatura:o.temperatura!=null&&o.temperatura!==""?parseFloat(o.temperatura):null})).filter(d=>!isNaN(d.dia)&&d.temperatura!=null&&!isNaN(d.temperatura)&&d.temperatura>=-5&&d.temperatura<=45);
             const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densOk(dep.curvaInicial) : null;
             const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densOk(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
