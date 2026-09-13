@@ -1053,12 +1053,12 @@ export default function BodegaApp() {
                           <XAxis dataKey="dia" type="number" domain={[0,maxDia]} allowDecimals={false}
                             tick={{fill:C.muted,fontSize:11}} label={{value:"Dia",position:"insideBottom",offset:-3,fill:C.muted,fontSize:11}}/>
                           <YAxis yAxisId="densidad" domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
-                          {tempData.length>0&&<YAxis yAxisId="temp" orientation="right" domain={[Math.min(10,...tempData.map(d=>d.temperatura)),Math.max(30,...tempData.map(d=>d.temperatura))]} tick={{fill:"#D98A3D",fontSize:11}} width={35} label={{value:"°C",position:"insideTopRight",fill:"#D98A3D",fontSize:10}}/>}
+                          {tempData.length>0&&<YAxis yAxisId="temp" orientation="right" domain={[Math.min(10,...tempData.map(d=>d.temperatura)),Math.max(30,...tempData.map(d=>d.temperatura))]} tick={{fill:C.danger,fontSize:11}} width={35} label={{value:"°C",position:"insideTopRight",fill:C.danger,fontSize:10}}/>}
                           <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}/>
                           <Legend wrapperStyle={{fontSize:11}}/>
                           {teoricaData.length>0&&<Line yAxisId="densidad" dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
                           {realData.length>0&&<Line yAxisId="densidad" dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
-                          {tempData.length>0&&<Line yAxisId="temp" dataKey="temp" name="Temperatura" stroke="#D98A3D" strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {tempData.length>0&&<Line yAxisId="temp" dataKey="temp" name="Temperatura" stroke={C.danger} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
