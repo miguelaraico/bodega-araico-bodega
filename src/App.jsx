@@ -289,6 +289,9 @@ const curvaCinetica = (inicial, objetivo, dias) => {
   }
   return puntos;
 };
+// Normaliza un nombre de producto para agrupar aunque se haya escrito con distintas mayusculas,
+// acentos o espacios ("Tartárico" / "tartarico " / "TARTARICO" deben sumar juntos)
+const normProducto = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().replace(/\s+/g," ");
 const textoMomento = step => step.momento==="densidad"
   ? "densidad "+(step.densidadMin===step.densidadMax?step.densidadMin:step.densidadMin+"-"+step.densidadMax)
   : "al inicio del lote";
@@ -1079,7 +1082,7 @@ export default function BodegaApp() {
                   opsProductos.forEach(op=>{
                     const c = cantidadDeOp(op);
                     if(!c) return;
-                    const key = (op.producto||"")+"|"+c.unidad;
+                    const key = normProducto(op.producto)+"|"+c.unidad;
                     if(!resumen[key]) resumen[key] = {producto:op.producto, unidad:c.unidad, total:0, veces:0, estimado:c.estimado};
                     resumen[key].total += c.cantidad;
                     resumen[key].veces += 1;
