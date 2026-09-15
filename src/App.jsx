@@ -525,6 +525,7 @@ export default function BodegaApp() {
   const [formMat,      setFormMat]      = useState({});
   const pdfRef = useRef(null);
   const saveRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(()=>{
     const intentarCargar = async (reintentosRestantes) => {
@@ -2042,6 +2043,41 @@ export default function BodegaApp() {
             <div style={S.hsub}>{guardando?"Guardando...":"Guardado"}</div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <input type="file" accept="application/json" ref={fileInputRef} style={{display:"none"}}
+              onChange={e=>{
+                const file = e.target.files[0];
+                e.target.value = "";
+                if(!file) return;
+                const reader = new FileReader();
+                reader.onload = ev => {
+                  try {
+                    const d = JSON.parse(ev.target.result);
+                    if(!window.confirm("Esto reemplaza TODOS los datos actuales de la app (depositos, barricas, operaciones, protocolos...) por los del archivo\n\n"+(d._exportadoEl?"Copia del: "+d._exportadoEl:"")+"\n\n¿Continuar?")) return;
+                    if(d.depositos)   setDepositos(d.depositos);
+                    if(d.barricas)    setBarricas(d.barricas);
+                    if(d.operaciones) setOperaciones(d.operaciones);
+                    if(d.cervezas)    setCervezas(d.cervezas);
+                    if(d.materiales)  setMateriales(d.materiales);
+                    if(d.stock)       setStockInicial(d.stock);
+                    if(d.productos)   setProductos(d.productos);
+                    if(d.protocolos)  setProtocolos(d.protocolos);
+                    if(d.orujos!=null) setOrujos(d.orujos);
+                    window.alert("Copia de seguridad restaurada. Se ha guardado automaticamente.");
+                  } catch(err) { window.alert("El archivo no es una copia de seguridad valida: "+err.message); }
+                };
+                reader.readAsText(file);
+              }}/>
+            <Btn variant="ghost" small onClick={()=>fileInputRef.current.click()}>📥 Importar</Btn>
+            <Btn variant="ghost" small onClick={()=>{
+                const backup = {depositos,barricas,operaciones,cervezas,materiales,stock:stockInicial,productos,protocolos,orujos,_exportadoEl:new Date().toLocaleString("es-ES")};
+                const blob = new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "backup-bodega-"+hoy()+".json";
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}>📤 Exportar</Btn>
             <Btn variant="ghost" small onClick={()=>setVista("importar_analisis")}>PDF Lab.</Btn>
             <Btn variant="gold" small onClick={()=>{setFormOp({fecha:fechaConsulta!==hoy()?fechaConsulta:hoy(),tipo:"",litros:""});setSelId(null);setVista("nueva_op");}}>
               + Operacion
