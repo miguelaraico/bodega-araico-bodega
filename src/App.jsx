@@ -2085,8 +2085,7 @@ export default function BodegaApp() {
           </div>
         </div>
         {/* Contador orujos */}
-        {orujos>0&&(
-          <div onClick={()=>{
+        <div onClick={()=>{
               const nuevo = window.prompt("Corregir total de orujo acumulado (kg):", orujos);
               if(nuevo===null) return;
               const val = parseFloat(nuevo.replace(",","."));
@@ -2094,10 +2093,9 @@ export default function BodegaApp() {
             }}
             style={{background:"#1A1A0A",borderBottom:"1px solid #5A4A1A",padding:"8px 16px",
             display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-            <div style={{fontSize:12,color:"#A0862A"}}>🫙 Orujo acumulado (toca para corregir)</div>
-            <div style={{fontSize:16,fontWeight:700,color:"#C8A050"}}>{orujos.toLocaleString("es-ES")} kg</div>
-          </div>
-        )}
+          <div style={{fontSize:12,color:"#A0862A"}}>🫙 Orujo acumulado (toca para corregir)</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#C8A050"}}>{orujos.toLocaleString("es-ES")} kg</div>
+        </div>
 
         {/* Selector fecha consulta */}
         <div style={{background:"#0A1520",borderBottom:"1px solid "+C.border,padding:"8px 16px",display:"flex",alignItems:"center",gap:10}}>
