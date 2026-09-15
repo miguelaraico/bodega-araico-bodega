@@ -81,8 +81,9 @@ const cargarBodega = async () => {
       productos:   map.productos   ? JSON.parse(map.productos)   : null,
       protocolos:  map.protocolos  ? JSON.parse(map.protocolos)  : null,
       orujos:      map.orujos      ? parseFloat(map.orujos)      : 0,
+      _error: false,
     };
-  } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null}; }
+  } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null,_error:true}; }
 };
 
 // Cargar ventas de la app de ventas para descontar del stock
@@ -467,6 +468,7 @@ export default function BodegaApp() {
   const [barricas,     setBarricas]     = useState(BARRICAS_DEFAULT);
   const [operaciones,  setOperaciones]  = useState([]);
   const [cargando,     setCargando]     = useState(true);
+  const [errorCarga,   setErrorCarga]   = useState(false);
   const [guardando,    setGuardando]    = useState(false);
   const [vista,        setVista]        = useState("lista");
   const [selId,        setSelId]        = useState(null);
@@ -525,24 +527,31 @@ export default function BodegaApp() {
   const saveRef = useRef(null);
 
   useEffect(()=>{
-    cargarBodega().then(({depositos:d,barricas:b,operaciones:o,cervezas:cerv,materiales:mat,stock:stk,productos:prods,protocolos:prots,orujos:oruj})=>{
-      if(d)     setDepositos(d);         else setDepositos(DEPOSITOS_DEFAULT);
-      if(b)     setBarricas(b);          else setBarricas(BARRICAS_DEFAULT);
-      if(o)     setOperaciones(o);       else setOperaciones([]);
-      if(cerv)  setCervezas(cerv);       else setCervezas({grape:0,negra:0});
-      if(mat)   setMateriales(mat);
-      if(stk)   setStockInicial(stk);
-      if(prods) setProductos(prods);
-      if(prots) setProtocolos(prots);
-      if(oruj)  setOrujos(oruj);
+    const intentarCargar = async (reintentosRestantes) => {
+      const r = await cargarBodega();
+      if(r._error) {
+        if(reintentosRestantes>0) { setTimeout(()=>intentarCargar(reintentosRestantes-1), 3000); return; }
+        setErrorCarga(true); // se queda "cargando" = true para siempre: el autoguardado nunca se activa
+        return;
+      }
+      if(r.depositos)   setDepositos(r.depositos);   else setDepositos(DEPOSITOS_DEFAULT);
+      if(r.barricas)    setBarricas(r.barricas);     else setBarricas(BARRICAS_DEFAULT);
+      if(r.operaciones) setOperaciones(r.operaciones); else setOperaciones([]);
+      if(r.cervezas)    setCervezas(r.cervezas);     else setCervezas({grape:0,negra:0});
+      if(r.materiales)  setMateriales(r.materiales);
+      if(r.stock)       setStockInicial(r.stock);
+      if(r.productos)   setProductos(r.productos);
+      if(r.protocolos)  setProtocolos(r.protocolos);
+      if(r.orujos)      setOrujos(r.orujos);
       setCargando(false);
-    });
+    };
+    intentarCargar(3);
     // Cargar ventas de la app principal
     cargarVentas().then(v=>setVentas(v));
   },[]);
 
   useEffect(()=>{
-    if(cargando) return;
+    if(cargando||errorCarga) return;
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
@@ -690,6 +699,20 @@ export default function BodegaApp() {
   };
 
   const todosContenedores = [...depositos,...barricas];
+
+  if(errorCarga) return (
+    <div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{textAlign:"center",color:C.text}}>
+        <div style={{fontSize:32,marginBottom:12}}>⚠️</div>
+        <div style={{fontSize:16,fontWeight:700,color:C.danger,marginBottom:8}}>No se pudo conectar con la base de datos</div>
+        <div style={{fontSize:13,color:C.muted,lineHeight:1.5}}>
+          Tus datos NO se han borrado — la app simplemente no ha podido leerlos ahora mismo.<br/><br/>
+          No cierres ni sigas usando la app en otra pestaña con datos distintos. Espera un minuto y recarga.
+        </div>
+        <button onClick={()=>window.location.reload()} style={{marginTop:16,padding:"8px 20px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"Georgia,serif"}}>Reintentar</button>
+      </div>
+    </div>
+  );
 
   if(cargando) return (
     <div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center"}}>
