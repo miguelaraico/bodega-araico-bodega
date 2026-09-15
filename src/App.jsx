@@ -114,6 +114,8 @@ const MAPA_PRODUCTOS = {
   "cerveza_negra":  "Cerveza Negra",
 };
 
+const LS_BACKUP_KEY = "bodega_araico_backup_local_v1";
+
 const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots) => {
   try {
     await supaFetch("POST","bodega_datos",[
@@ -127,6 +129,14 @@ const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots) => {
       {bodega_id:BODEGA_ID,clave:"protocolos",  valor:JSON.stringify(prots)},
       {bodega_id:BODEGA_ID,clave:"orujos",      valor:String(oruj)},
     ]);
+    // Red de seguridad: copia local en el navegador, independiente de Supabase
+    try {
+      localStorage.setItem(LS_BACKUP_KEY, JSON.stringify({
+        depositos:dep, barricas:bar, operaciones:ops, cervezas:cerv, materiales:mat,
+        stock:stk, productos:prods, protocolos:prots, orujos:oruj,
+        _guardadoEl: new Date().toISOString(),
+      }));
+    } catch(e){ /* localStorage lleno o no disponible: no es critico */ }
   } catch(e){ console.error(e); }
 };
 
@@ -469,6 +479,7 @@ export default function BodegaApp() {
   const [operaciones,  setOperaciones]  = useState([]);
   const [cargando,     setCargando]     = useState(true);
   const [errorCarga,   setErrorCarga]   = useState(false);
+  const [avisoDatos,   setAvisoDatos]   = useState(null); // {servidor, local} cuando hay discrepancia sospechosa
   const [guardando,    setGuardando]    = useState(false);
   const [vista,        setVista]        = useState("lista");
   const [selId,        setSelId]        = useState(null);
@@ -535,6 +546,20 @@ export default function BodegaApp() {
         setErrorCarga(true); // se queda "cargando" = true para siempre: el autoguardado nunca se activa
         return;
       }
+
+      // Red de seguridad: comparar con la copia local del navegador antes de aceptar
+      // los datos del servidor. Si el servidor trae muchisimo menos contenido que la
+      // ultima copia local guardada, algo va mal -- no lo aceptamos en silencio.
+      let backupLocal = null;
+      try { const raw = localStorage.getItem(LS_BACKUP_KEY); if(raw) backupLocal = JSON.parse(raw); } catch(e){}
+      const tam = obj => JSON.stringify(obj||[]).length;
+      const tamServidor = tam(r.depositos)+tam(r.operaciones);
+      const tamLocal = backupLocal ? tam(backupLocal.depositos)+tam(backupLocal.operaciones) : 0;
+      if(backupLocal && tamLocal>300 && tamServidor < tamLocal*0.5) {
+        setAvisoDatos({servidor:r, local:backupLocal});
+        return; // esperamos a que el usuario decida, no autoguardamos nada todavia
+      }
+
       if(r.depositos)   setDepositos(r.depositos);   else setDepositos(DEPOSITOS_DEFAULT);
       if(r.barricas)    setBarricas(r.barricas);     else setBarricas(BARRICAS_DEFAULT);
       if(r.operaciones) setOperaciones(r.operaciones); else setOperaciones([]);
@@ -700,6 +725,46 @@ export default function BodegaApp() {
   };
 
   const todosContenedores = [...depositos,...barricas];
+
+  if(avisoDatos) {
+    const aplicar = (r) => {
+      if(r.depositos)   setDepositos(r.depositos);   else setDepositos(DEPOSITOS_DEFAULT);
+      if(r.barricas)    setBarricas(r.barricas);     else setBarricas(BARRICAS_DEFAULT);
+      if(r.operaciones) setOperaciones(r.operaciones); else setOperaciones([]);
+      if(r.cervezas)    setCervezas(r.cervezas);     else setCervezas({grape:0,negra:0});
+      if(r.materiales)  setMateriales(r.materiales);
+      if(r.stock)       setStockInicial(r.stock);
+      if(r.productos)   setProductos(r.productos);
+      if(r.protocolos)  setProtocolos(r.protocolos);
+      if(r.orujos)      setOrujos(r.orujos);
+      setAvisoDatos(null);
+      setCargando(false);
+    };
+    const nDep = arr => (arr||[]).filter(d=>d.tipoVino||d.litrosIniciales>0).length;
+    const nOps = arr => (arr||[]).length;
+    return (
+      <div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{textAlign:"center",color:C.text,maxWidth:380}}>
+          <div style={{fontSize:32,marginBottom:12}}>⚠️</div>
+          <div style={{fontSize:16,fontWeight:700,color:C.danger,marginBottom:12}}>Posible pérdida de datos detectada</div>
+          <div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:16,textAlign:"left"}}>
+            Lo que devuelve Supabase ahora mismo tiene muchos menos datos que la última copia guardada en este navegador. Antes de continuar, elige cuál quieres usar:
+          </div>
+          <div style={{...S.card,marginBottom:10,textAlign:"left"}}>
+            <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Copia local de este navegador{avisoDatos.local._guardadoEl?" ("+new Date(avisoDatos.local._guardadoEl).toLocaleString("es-ES")+")":""}</div>
+            <div style={{fontSize:13}}>{nOps(avisoDatos.local.operaciones)} operaciones · {nDep(avisoDatos.local.depositos)} depositos con contenido</div>
+            <Btn variant="gold" small onClick={()=>aplicar(avisoDatos.local)}>Usar esta copia</Btn>
+          </div>
+          <div style={{...S.card,marginBottom:10,textAlign:"left"}}>
+            <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Lo que hay en Supabase ahora</div>
+            <div style={{fontSize:13}}>{nOps(avisoDatos.servidor.operaciones)} operaciones · {nDep(avisoDatos.servidor.depositos)} depositos con contenido</div>
+            <Btn variant="ghost" small onClick={()=>aplicar(avisoDatos.servidor)}>Usar esta version</Btn>
+          </div>
+          <div style={{fontSize:11,color:C.muted}}>Elijas lo que elijas, no se guardara nada hasta que confirmes.</div>
+        </div>
+      </div>
+    );
+  }
 
   if(errorCarga) return (
     <div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
