@@ -1538,7 +1538,8 @@ export default function BodegaApp() {
       }
 
       // Trasiego: heredar etiqueta al destino y limpiar origen si queda vacio
-      if(f.tipo==="trasiego"&&f.depId) {
+      // (solo al crear: al editar, volver a heredar duplicaria el historial copiado)
+      if(!f._editandoId && f.tipo==="trasiego"&&f.depId) {
         const depOrigen = depositos.find(d=>d.id===f.depId);
         const heredar = (depId) => {
           if(depOrigen&&(depOrigen.tipoVino||depOrigen.etiqueta)) {
@@ -1572,25 +1573,24 @@ export default function BodegaApp() {
         const litrosAntes = litrosActuales(f.depId, hoy());
         const caps = {"botella":0.75,"bib5":5,"bib10":10,"bib15":15,"garrafa":20};
         const litrosTras = parseFloat(f.litros||0) || (parseFloat(f.botellas||0) * (caps[f.formato||"botella"]||0.75));
-        const merma = parseFloat(f.merma||0);
+        let merma = parseFloat(f.merma||0);
         const diferencia = litrosAntes - litrosTras - merma;
-        // Avisar si quedan litros sin justificar (posible merma)
-        if(f.tipo==="embotellado" && diferencia>0 && diferencia<50 && !f.merma) {
+        // Avisar si quedan litros sin justificar (posible merma).
+        // La operacion YA se ha guardado arriba: aqui solo se ACTUALIZA con la merma,
+        // nunca se vuelve a insertar (eso duplicaba el embotellado y el stock).
+        if(!f._editandoId && f.tipo==="embotellado" && diferencia>0 && diferencia<50 && !f.merma) {
           if(window.confirm(`Quedan ${diferencia.toLocaleString("es-ES")} L sin envasar en ${f.depId}. ¿Los añado como merma?`)) {
-            setOperaciones(prev=>[{...f,id:Date.now(),merma:diferencia},...prev]);
-          } else {
-            setOperaciones(prev=>[{...f,id:Date.now()},...prev]);
+            merma = diferencia;
+            setOperaciones(prev=>prev.map((o,i)=>i===0?{...o,merma:diferencia}:o));
           }
-        } else {
-          if(!f._editandoId) {/* ya se añadió arriba */}
         }
         if(litrosAntes - litrosTras - merma <= 0) {
           setDepositos(prev=>prev.map(d=>d.id===f.depId?{...d,tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:"",protocoloOmitidos:[],fermentacionTerminada:false}:d));
         }
       }
 
-      // Descontar materiales si es embotellado
-      if(f.tipo==="embotellado") {
+      // Descontar materiales si es embotellado (solo al crear, no al editar)
+      if(f.tipo==="embotellado" && !f._editandoId) {
         const cant = parseFloat(f.botellas||0);
         if(cant>0) {
           setMateriales(prev=>({
