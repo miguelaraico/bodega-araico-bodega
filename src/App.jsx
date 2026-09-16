@@ -1007,6 +1007,20 @@ export default function BodegaApp() {
                 if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,etiqueta:e.target.value}:b));
                 else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,etiqueta:e.target.value}:d));
               }}/>
+            {!barricas.some(b=>b.id===dep.id)&&<>
+              <label style={S.label}>Siempre lleno</label>
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                {[[false,"No (se calcula por operaciones)"],[true,"Sí (muestra capacidad fija)"]].map(([v,l])=>(
+                  <button key={String(v)} onClick={()=>setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,siempreLleno:v}:d))}
+                    style={{flex:1,padding:"7px",borderRadius:8,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,
+                      border:"2px solid "+((dep.siempreLleno||false)===v?C.gold:C.border),
+                      background:(dep.siempreLleno||false)===v?"#1A2535":"transparent",
+                      color:(dep.siempreLleno||false)===v?C.gold:C.muted}}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </>}
           </div>
 
           {/* Fermentacion: curva teorica vs real + productos añadidos del lote actual */}
