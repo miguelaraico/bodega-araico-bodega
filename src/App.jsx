@@ -1745,7 +1745,7 @@ export default function BodegaApp() {
             <label style={S.label}>Tipo de vino</label>
             <select style={S.input} value={f.tipoVino||""} onChange={e=>set("tipoVino",e.target.value)}>
               <option value="">-- Tipo --</option>
-              {["Tinto","Blanco","Rosado","Mosto"].map(v=><option key={v}>{v}</option>)}
+              {TIPOS_VINO.map(([v,l])=><option key={v}>{l}</option>)}
             </select>
             <label style={S.label}>Variedad</label>
             <input type="text" style={S.input} placeholder="ej. Tempranillo" value={f.variedad||""} onChange={e=>set("variedad",e.target.value)}/>
