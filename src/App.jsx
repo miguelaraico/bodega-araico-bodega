@@ -80,7 +80,7 @@ const cargarBodega = async () => {
       stock:       map.stock       ? JSON.parse(map.stock)       : null,
       productos:   map.productos   ? JSON.parse(map.productos)   : null,
       protocolos:  map.protocolos  ? JSON.parse(map.protocolos)  : null,
-      orujos:      map.orujos      ? parseFloat(map.orujos)      : 0,
+      orujosAjuste: map.orujos_ajuste ? parseFloat(map.orujos_ajuste) : 0,
       _error: false,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null,_error:true}; }
@@ -127,13 +127,13 @@ const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots) => {
       {bodega_id:BODEGA_ID,clave:"stock",       valor:JSON.stringify(stk)},
       {bodega_id:BODEGA_ID,clave:"productos",   valor:JSON.stringify(prods)},
       {bodega_id:BODEGA_ID,clave:"protocolos",  valor:JSON.stringify(prots)},
-      {bodega_id:BODEGA_ID,clave:"orujos",      valor:String(oruj)},
+      {bodega_id:BODEGA_ID,clave:"orujos_ajuste", valor:String(oruj)},
     ]);
     // Red de seguridad: copia local en el navegador, independiente de Supabase
     try {
       localStorage.setItem(LS_BACKUP_KEY, JSON.stringify({
         depositos:dep, barricas:bar, operaciones:ops, cervezas:cerv, materiales:mat,
-        stock:stk, productos:prods, protocolos:prots, orujos:oruj,
+        stock:stk, productos:prods, protocolos:prots, orujosAjuste:oruj,
         _guardadoEl: new Date().toISOString(),
       }));
     } catch(e){ /* localStorage lleno o no disponible: no es critico */ }
@@ -496,7 +496,7 @@ export default function BodegaApp() {
   const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
   const [verStockInicial, setVerStockInicial] = useState(false);
   const [ventas,       setVentas]       = useState([]);
-  const [orujos,       setOrujos]       = useState(0); // kg totales acumulados
+  const [orujosAjuste,  setOrujosAjuste]  = useState(0); // correccion manual, se suma a lo calculado desde las operaciones de prensado
   const [materiales,   setMateriales]   = useState({
     botellas: [
       {id:"bj",  nombre:"Bordelesa Joven",    stock:0, lotes:[]},
@@ -569,7 +569,7 @@ export default function BodegaApp() {
       if(r.stock)       setStockInicial(r.stock);
       if(r.productos)   setProductos(r.productos);
       if(r.protocolos)  setProtocolos(r.protocolos);
-      if(r.orujos)      setOrujos(r.orujos);
+      if(r.orujosAjuste!=null) setOrujosAjuste(r.orujosAjuste);
       setCargando(false);
     };
     intentarCargar(3);
@@ -582,10 +582,14 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos,protocolos);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujosAjuste,protocolos);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujos,protocolos]);
+  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujosAjuste,protocolos]);
+
+  // Orujo total = suma de los kg registrados en cada prensado + ajuste manual.
+  // Derivarlo de las operaciones evita descuadres al borrar o editar un prensado.
+  const orujos = operaciones.reduce((s,o)=>s+(o.tipo==="prensado"?parseFloat(o.orujoKg||0):0),0) + (orujosAjuste||0);
 
   const litrosActuales = (id, hastaFecha) => {
     const contenedor = [...depositos,...barricas].find(d=>d.id===id);
@@ -737,7 +741,7 @@ export default function BodegaApp() {
       if(r.stock)       setStockInicial(r.stock);
       if(r.productos)   setProductos(r.productos);
       if(r.protocolos)  setProtocolos(r.protocolos);
-      if(r.orujos)      setOrujos(r.orujos);
+      if(r.orujosAjuste!=null) setOrujosAjuste(r.orujosAjuste);
       setAvisoDatos(null);
       setCargando(false);
     };
@@ -1490,8 +1494,7 @@ export default function BodegaApp() {
           notas: (f.notas||"")+" [Prensado desde "+(f.depId||"prensa")+"]",
         };
         setOperaciones(prev=>[opLlenado,...prev]);
-        // Acumular orujos
-        if(f.orujoKg) setOrujos(prev=>prev+parseFloat(f.orujoKg));
+        // El orujo ya no se acumula aqui: se calcula siempre desde las operaciones de prensado
       }
 
       // Calcular litros ANTES de añadir la operacion
@@ -1691,7 +1694,7 @@ export default function BodegaApp() {
             <label style={S.label}>Kg de orujo generados</label>
             <input type="number" style={S.input} placeholder="0" value={f.orujoKg||""} onChange={e=>set("orujoKg",e.target.value)}/>
             {f.orujoKg&&<div style={{fontSize:12,color:C.gold,marginTop:-6,marginBottom:8}}>
-              Total orujo acumulado: {fmtK(orujos + parseFloat(f.orujoKg||0))} kg
+              Total orujo acumulado: {fmtK(orujos + (f._editandoId?0:parseFloat(f.orujoKg||0)))} kg
             </div>}
             <label style={S.label}>Tipo de vino</label>
             <select style={S.input} value={f.tipoVino||""} onChange={e=>set("tipoVino",e.target.value)}>
@@ -2141,7 +2144,7 @@ export default function BodegaApp() {
                     if(d.stock)       setStockInicial(d.stock);
                     if(d.productos)   setProductos(d.productos);
                     if(d.protocolos)  setProtocolos(d.protocolos);
-                    if(d.orujos!=null) setOrujos(d.orujos);
+                    if(d.orujosAjuste!=null) setOrujosAjuste(d.orujosAjuste);
                     window.alert("Copia de seguridad restaurada. Se ha guardado automaticamente.");
                   } catch(err) { window.alert("El archivo no es una copia de seguridad valida: "+err.message); }
                 };
@@ -2149,7 +2152,7 @@ export default function BodegaApp() {
               }}/>
             <Btn variant="ghost" small onClick={()=>fileInputRef.current.click()}>📥 Importar</Btn>
             <Btn variant="ghost" small onClick={()=>{
-                const backup = {depositos,barricas,operaciones,cervezas,materiales,stock:stockInicial,productos,protocolos,orujos,_exportadoEl:new Date().toLocaleString("es-ES")};
+                const backup = {depositos,barricas,operaciones,cervezas,materiales,stock:stockInicial,productos,protocolos,orujosAjuste,_exportadoEl:new Date().toLocaleString("es-ES")};
                 const blob = new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -2166,10 +2169,11 @@ export default function BodegaApp() {
         </div>
         {/* Contador orujos */}
         <div onClick={()=>{
-              const nuevo = window.prompt("Corregir total de orujo acumulado (kg):", orujos);
+              const calculado = orujos - (orujosAjuste||0);
+              const nuevo = window.prompt("Corregir total de orujo acumulado (kg).\n\nDe los prensados registrados salen "+calculado.toLocaleString("es-ES")+" kg.", orujos);
               if(nuevo===null) return;
               const val = parseFloat(nuevo.replace(",","."));
-              if(!isNaN(val)&&val>=0) setOrujos(val);
+              if(!isNaN(val)&&val>=0) setOrujosAjuste(val-calculado);
             }}
             style={{background:"#1A1A0A",borderBottom:"1px solid #5A4A1A",padding:"8px 16px",
             display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
