@@ -494,6 +494,7 @@ export default function BodegaApp() {
   const [cervezas,     setCervezas]     = useState({grape:0, negra:0});
   const [formCerveza,  setFormCerveza]  = useState(null);
   const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
+  const [verStockInicial, setVerStockInicial] = useState(false);
   const [ventas,       setVentas]       = useState([]);
   const [orujos,       setOrujos]       = useState(0); // kg totales acumulados
   const [materiales,   setMateriales]   = useState({
@@ -2526,6 +2527,37 @@ export default function BodegaApp() {
           <div><div style={S.htitle}>Stock</div><div style={S.hsub}>{fmt(totalBotellero+totalAlmacen)} botellas en total</div></div>
         </div>
         <div style={{...S.body,flex:1}}>
+
+          {/* Existencias iniciales (editable) */}
+          <div style={{...S.card,borderColor:C.gold,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}
+                 onClick={()=>setVerStockInicial(v=>!v)}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.gold}}>Existencias iniciales</div>
+                <div style={{fontSize:11,color:C.muted}}>Punto de partida antes de operaciones y ventas</div>
+              </div>
+              <span style={{color:C.gold,fontSize:18}}>{verStockInicial?"−":"+"}</span>
+            </div>
+
+            {verStockInicial&&<div style={{marginTop:12}}>
+              {[["almacen","Almacen"],["botellero","Botellero (sin etiquetar)"]].map(([campo,titulo])=>(
+                <div key={campo} style={{marginBottom:14}}>
+                  <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{titulo}</div>
+                  {(stockInicial[campo]||[]).map((item,idx)=>(
+                    <div key={idx} style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+                      <input type="text" placeholder="Producto" style={{...S.input,flex:2,marginBottom:0}} value={item.etiqueta||""}
+                        onChange={e=>setStockInicial(prev=>({...prev,[campo]:prev[campo].map((it,i)=>i===idx?{...it,etiqueta:e.target.value}:it)}))}/>
+                      <input type="number" placeholder="0" style={{...S.input,flex:1,marginBottom:0}} value={item.botellas||""}
+                        onChange={e=>setStockInicial(prev=>({...prev,[campo]:prev[campo].map((it,i)=>i===idx?{...it,botellas:parseFloat(e.target.value)||0}:it)}))}/>
+                      <button onClick={()=>setStockInicial(prev=>({...prev,[campo]:prev[campo].filter((_,i)=>i!==idx)}))}
+                        style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>
+                    </div>
+                  ))}
+                  <Btn variant="ghost" small onClick={()=>setStockInicial(prev=>({...prev,[campo]:[...(prev[campo]||[]),{etiqueta:"",botellas:0}]}))}>+ Añadir linea</Btn>
+                </div>
+              ))}
+            </div>}
+          </div>
 
           {/* Resumen */}
           <div style={{display:"flex",gap:10,marginBottom:12}}>
