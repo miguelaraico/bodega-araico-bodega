@@ -506,6 +506,7 @@ export default function BodegaApp() {
   const [formCerveza,  setFormCerveza]  = useState(null);
   const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
   const [verStockInicial, setVerStockInicial] = useState(false);
+  const [avisosEnologo, setAvisosEnologo] = useState({}); // {depId: {cargando, avisos, error, hash}}
   const [ventas,       setVentas]       = useState([]);
   const [orujosAjuste,  setOrujosAjuste]  = useState(0); // correccion manual, se suma a lo calculado desde las operaciones de prensado
   const [materiales,   setMateriales]   = useState({
@@ -668,6 +669,59 @@ export default function BodegaApp() {
   };
 
   // Kg de vendimia sin prensar en un deposito (solo si aun no tiene litros ni ha habido llenado/trasiego)
+  // ── Asistente enologo: construye el contexto del deposito y pide avisos ────
+  const consultarEnologo = async (dep) => {
+    const id = dep.id;
+    const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(id, fechaConsulta);
+    const kg = kgVendimiaDe(id, fechaConsulta);
+    const hist = histDep(id, fechaConsulta, true);
+    const ferm = hist.filter(o=>o.tipo==="fermentacion"&&(o.densidad||o.temperatura))
+                     .sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    const prods = hist.filter(o=>["aditivo_fermentacion","sulfitado","clarificacion","filtracion","acidez","azucar"].includes(o.tipo));
+    const anls = hist.filter(o=>o.tipo==="analisis");
+    const proto = protocolos[dep.tipoVino||""] || [];
+
+    const L = [];
+    L.push(`Deposito ${id} (${dep.capacidad||"?"} L de capacidad)`);
+    L.push(`Tipo de vino: ${dep.tipoVino||"sin asignar"}${dep.anada?" | Añada "+dep.anada:""}${dep.etiqueta?" | "+dep.etiqueta:""}`);
+    L.push(litros>0 ? `Contenido: ${litros} L` : (kg>0 ? `Contenido: ${kg} kg de uva sin prensar` : "Contenido: vacio"));
+    if(dep.curvaInicial||dep.curvaObjetivo||dep.curvaDias)
+      L.push(`Curva teorica prevista: de ${densView(dep.curvaInicial)} a ${densView(dep.curvaObjetivo)} en ${dep.curvaDias} dias`);
+    L.push(`Fecha de hoy: ${fechaConsulta}`);
+
+    L.push("\nSEGUIMIENTO DE FERMENTACION (densidad g/L y temperatura °C):");
+    if(ferm.length===0) L.push("  (sin lecturas registradas)");
+    ferm.forEach(o=>L.push(`  ${o.fecha}${o.hora?" "+o.hora:""}: densidad ${o.densidad||"-"}, temperatura ${o.temperatura||"-"}`));
+
+    L.push("\nPRODUCTOS YA AÑADIDOS A ESTE LOTE:");
+    if(prods.length===0) L.push("  (ninguno registrado)");
+    prods.forEach(o=>L.push(`  ${o.fecha}: ${o.producto||o.tipo}${o.cantidadReal?" - "+o.cantidadReal+" "+(o.unidadReal||"g"):""}${o.dosisTeorica?" (teorica: "+o.dosisTeorica+")":""}`));
+
+    L.push("\nPROTOCOLO PREVISTO PARA ESTE TIPO DE VINO:");
+    if(proto.length===0) L.push("  (sin protocolo definido)");
+    proto.forEach(s=>L.push(`  ${s.producto} - ${s.dosis} - ${textoMomento(s)}`));
+
+    L.push("\nANALISIS DE LABORATORIO:");
+    if(anls.length===0) L.push("  (ninguno registrado)");
+    anls.forEach(o=>L.push(`  ${o.fecha}: pH ${o.ph||"-"}, ac.tartarica ${o.acidez||"-"} g/L, ac.acetico ${o.acidezV||"-"} g/L, malico ${o.acidoMalico||"-"} g/L, alcohol ${o.alcohol||"-"}%, azucares ${o.azucares||"-"} g/L, SO2 libre ${o.so2libre||"-"} mg/L`));
+
+    const contexto = L.join("\n");
+    const hash = contexto.length+"_"+ferm.length+"_"+prods.length;
+
+    setAvisosEnologo(p=>({...p,[id]:{cargando:true,avisos:null,error:null,hash}}));
+    try {
+      const r = await fetch("/api/enologo", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({contexto}),
+      });
+      const data = await r.json();
+      if(!r.ok) throw new Error(data.error||"Error desconocido");
+      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:data.avisos||[],error:null,hash}}));
+    } catch(e) {
+      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:null,error:String(e.message||e),hash}}));
+    }
+  };
+
   const kgVendimiaDe = (id, hastaFecha) => {
     const hasta = hastaFecha || hoy();
     const litros = litrosActuales(id, hasta);
@@ -1184,6 +1238,42 @@ export default function BodegaApp() {
                   <Btn variant="ghost" small onClick={()=>marcarTerminada(true)}>Marcar como terminada</Btn>
                 </div>
                 <div style={{height:8}}/>
+
+                {/* Asistente enologo: revision de la fermentacion */}
+                {(()=>{
+                  const est = avisosEnologo[dep.id];
+                  const nivelColor = {alto:C.danger, medio:C.gold, info:C.accent};
+                  return (
+                    <div style={{...S.card,marginBottom:12,borderColor:"#3A4A5E"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍇 Revision del enologo</div>
+                          <div style={{fontSize:11,color:C.muted}}>Analiza el seguimiento y avisa si detecta algo</div>
+                        </div>
+                        <Btn variant="ghost" small onClick={()=>consultarEnologo(dep)}>
+                          {est?.cargando?"Analizando...":(est?"Revisar de nuevo":"Revisar")}
+                        </Btn>
+                      </div>
+
+                      {est?.error&&<div style={{fontSize:12,color:C.danger,marginTop:10}}>{est.error}</div>}
+
+                      {est?.avisos&&est.avisos.length===0&&
+                        <div style={{fontSize:12,color:C.accent,marginTop:10}}>✓ Sin incidencias: la fermentacion va segun lo previsto</div>}
+
+                      {est?.avisos&&est.avisos.length>0&&<div style={{marginTop:10}}>
+                        {est.avisos.map((a,i)=>(
+                          <div key={i} style={{borderLeft:"3px solid "+(nivelColor[a.nivel]||C.muted),paddingLeft:10,marginBottom:10}}>
+                            <div style={{fontSize:13,fontWeight:700,color:nivelColor[a.nivel]||C.text}}>{a.titulo}</div>
+                            <div style={{fontSize:12,color:C.muted,marginTop:2}}>{a.detalle}</div>
+                          </div>
+                        ))}
+                        <div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>
+                          Sugerencias automaticas — la decision final es tuya.
+                        </div>
+                      </div>}
+                    </div>
+                  );
+                })()}
 
                 {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
                   {pasosPendientes.map(step=>(
