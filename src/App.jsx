@@ -263,9 +263,16 @@ const densOk = v => { const n = parseFloat(v); if(isNaN(n)) return NaN; return n
 // Extrae {valor, unidadNum, unidadDen} de un texto de dosis tipo "2,5 g/hL", "0,10 g/L", "0,2 g/kg"
 const parseDosis = (texto) => {
   if(!texto) return null;
-  const m = String(texto).replace(",",".").match(/(\d+(?:\.\d+)?)\s*(g|ml|kg)\s*\/\s*(hl|l|kg)/i);
+  // Normalizar TODAS las comas decimales (no solo la primera): "0,13-0,14 g/kg"
+  const t = String(texto).replace(/,/g, ".");
+  // Buscar la unidad (g|ml|kg / hl|l|kg) y el numero -o rango de numeros- que la precede
+  const m = t.match(/(\d+(?:\.\d+)?)\s*(?:[-–a]\s*(\d+(?:\.\d+)?))?\s*(g|ml|kg)\s*\/\s*(hl|l|kg)/i);
   if(!m) return null;
-  return {valor:parseFloat(m[1]), unidadNum:m[2].toLowerCase(), unidadDen:m[3].toLowerCase()};
+  // Si es un rango (0.13-0.14), usar el valor medio
+  const v1 = parseFloat(m[1]);
+  const v2 = m[2]!==undefined ? parseFloat(m[2]) : null;
+  const valor = v2!=null ? (v1+v2)/2 : v1;
+  return {valor, unidadNum:m[3].toLowerCase(), unidadDen:m[4].toLowerCase(), rango:v2!=null};
 };
 // Calcula la cantidad total a preparar segun la dosis y los litros/kg del lote.
 // Para dosis en g/kg (referidas al peso de uva), usa el kg real de vendimia si se conoce;
