@@ -806,27 +806,67 @@ export default function BodegaApp() {
       const fecha = fechaMatch ? `${fechaMatch[3]}-${fechaMatch[2]}-${fechaMatch[1]}` : hoy();
       const pedidoMatch = texto.match(/N[ºo°]?\s*[Pp]edido[:\s]+(\d+)/i);
       const nPedido = pedidoMatch ? pedidoMatch[1] : "";
+
+      // Detectar el ORDEN de las columnas a partir de la cabecera del boletin.
+      // Asi funciona aunque el laboratorio incluya mas o menos parametros en cada informe.
+      const orden = [];
+      const cab = texto.replace(/\n/g," ");
+      const marcadores = [
+        [/[Gg]rado\s*alcoh/,          "gradoAlcohol"],
+        [/Ac\.?\s*Total\s*Tart/i,     "acidezTotal"],
+        [/\bpH\b/,                    "pH"],
+        [/Ac\.?\s*Ac[eé]tico/i,       "acidezVolatil"],
+        [/SO2\s*Libre/i,              "so2Libre"],
+        [/SO2\s*Total/i,              "so2Total"],
+        [/[AÁ]c\.?\s*L-?M[aá]lico/i,  "acidoMalico"],
+        [/Az[uú]cares/i,              "azucares"],
+      ];
+      marcadores.forEach(([re,campo])=>{
+        const idx = cab.search(re);
+        if(idx>=0) orden.push({idx, campo});
+      });
+      orden.sort((a,b)=>a.idx-b.idx);
+      const campos = orden.map(o=>o.campo);
+
       const muestras = [];
       const lineas = texto.split(/\n/).map(l=>l.trim()).filter(l=>l);
       lineas.forEach(linea => {
-        const match = linea.match(/(\d{2}\/\d+)\s+[Vv]ino\s+([A-Za-z0-9\-]+)\s+([A-Za-z\s]+)\s+([\d.,]+)/);
-        if(match) {
-          const nums = linea.match(/[\d]+[.,][\d]+/g)||[];
-          muestras.push({
-            nMuestra:match[1], identificador:match[2], producto:match[3].trim(),
-            gradoAlcohol: nums[0]?parseFloat(nums[0].replace(",",".")):null,
-            acidezTotal:  nums[1]?parseFloat(nums[1].replace(",",".")):null,
-            pH:           nums[2]?parseFloat(nums[2].replace(",",".")):null,
-            acidezVolatil:nums[3]?parseFloat(nums[3].replace(",",".")):null,
-            so2Libre:     nums[4]?parseFloat(nums[4].replace(",",".")):null,
-            so2Total:     nums[5]?parseFloat(nums[5].replace(",",".")):null,
-            azucares:     nums[6]?parseFloat(nums[6].replace(",",".")):null,
-            depAsignado:"", ignorar:false, fecha,
-          });
-        }
+        // Linea de muestra: empieza por el nº de muestra tipo "26/113691"
+        const mNum = linea.match(/^(\d{2}\/\d+)\s+(.*)$/);
+        if(!mNum) return;
+        const nMuestra = mNum[1];
+        let resto = mNum[2];
+
+        // La cabecera de la fila (descripcion / identificador / producto) va antes de los
+        // valores. Los valores empiezan en el primer numero DECIMAL (12,00 / 5,06) o limite
+        // (<0,1), nunca en un entero suelto como el "1" de "D1" o "B1".
+        const reValor = /<\s*\d+(?:[.,]\d+)?\s*\(?L\.?C\.?\)?|\d+[.,]\d+/g;
+        const primer = resto.match(reValor);
+        const posPrimer = primer ? resto.indexOf(primer[0]) : resto.length;
+        const cabeceraFila = resto.slice(0, posPrimer).trim();
+        const zonaValores  = resto.slice(posPrimer);
+
+        // Identificador = ultimo token tipo "D1", "B1", "1" antes del producto
+        const palabras = cabeceraFila.split(/\s+/).filter(Boolean);
+        const idxId = palabras.map(p=>/^[A-Za-z]{0,2}\d+$/.test(p)).lastIndexOf(true);
+        const identificador = idxId>=0 ? palabras[idxId] : (palabras[0]||"");
+        const producto = palabras.slice(idxId>=0?idxId+1:0).join(" ").trim();
+
+        // Extraer valores, descartando incertidumbres (± 0,25)
+        const tokens = (zonaValores.replace(/±\s*\d+(?:[.,]\d+)?/g,"").match(reValor)) || [];
+        const valorDe = tok => {
+          if(tok==null) return null;
+          if(/^</.test(tok)) return 0;              // "<0,1 (L.C.)" => por debajo del limite: 0
+          const n = parseFloat(String(tok).replace(",","."));
+          return isNaN(n)?null:n;
+        };
+
+        const m = {nMuestra, identificador, producto, depAsignado:"", ignorar:false, fecha};
+        campos.forEach((campo,i)=>{ m[campo] = valorDe(tokens[i]); });
+        muestras.push(m);
       });
       const muestrasConDep = muestras.map(m=>{
-        const idLimpio = m.identificador.replace(/[-\s]/g,"").toUpperCase();
+        const idLimpio = (m.identificador||"").replace(/[-\s]/g,"").toUpperCase();
         const depMatch = [...depositos,...barricas].find(d=>
           d.id.replace(/[-\s]/g,"").toUpperCase()===idLimpio ||
           d.nombre.replace(/[-\s]/g,"").toUpperCase()===idLimpio
@@ -845,6 +885,8 @@ export default function BodegaApp() {
           acidez:m.acidezTotal?.toString()||"", alcohol:m.gradoAlcohol?.toString()||"",
           acidezV:m.acidezVolatil?.toString()||"", so2libre:m.so2Libre?.toString()||"",
           so2total:m.so2Total?.toString()||"", azucares:m.azucares?.toString()||"",
+          acidoMalico:m.acidoMalico?.toString()||"",
+          nInforme:analisisPDF?.nPedido||"",
           notas:"Boletin "+(analisisPDF?.nPedido||"")+" - Muestra "+m.nMuestra,
         }));
       setOperaciones(prev=>[...nuevasOps,...prev]);
@@ -907,13 +949,25 @@ export default function BodegaApp() {
                   </button>
                 </div>
                 {!m.ignorar&&<>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10,fontSize:11,color:C.muted}}>
-                    {m.gradoAlcohol&&<span>Alc: <b style={{color:C.text}}>{m.gradoAlcohol}%</b></span>}
-                    {m.acidezTotal&&<span>Acid.T: <b style={{color:C.text}}>{m.acidezTotal} g/L</b></span>}
-                    {m.pH&&<span>pH: <b style={{color:C.text}}>{m.pH}</b></span>}
-                    {m.acidezVolatil&&<span>AV: <b style={{color:C.text}}>{m.acidezVolatil}</b></span>}
-                    {m.so2Libre&&<span>SO2L: <b style={{color:C.text}}>{m.so2Libre}</b></span>}
+                  <label style={S.label}>Parametros (editables)</label>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                    {[["gradoAlcohol","Grado alc. %"],["acidezTotal","Ac. tartarica"],["pH","pH"],
+                      ["acidezVolatil","Ac. acetico"],["acidoMalico","Ac. L-Malico"],["azucares","Azucares"],
+                      ["so2Libre","SO2 libre"],["so2Total","SO2 total"]].map(([campo,label])=>(
+                      <div key={campo}>
+                        <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{label}</div>
+                        <input type="text" inputMode="decimal" style={{...S.input,marginBottom:0,padding:"6px 8px",fontSize:12}}
+                          value={m[campo]!=null?m[campo]:""}
+                          onChange={e=>{
+                            const v = e.target.value.replace(",",".");
+                            setAnalisisPDF(prev=>({...prev,muestras:prev.muestras.map((x,j)=>j===i?{...x,[campo]:v===""?null:parseFloat(v)}:x)}));
+                          }}/>
+                      </div>
+                    ))}
                   </div>
+                  <label style={S.label}>Fecha</label>
+                  <input type="date" style={{...S.input,marginBottom:10}} value={m.fecha||""}
+                    onChange={e=>setAnalisisPDF(prev=>({...prev,muestras:prev.muestras.map((x,j)=>j===i?{...x,fecha:e.target.value}:x)}))}/>
                   <label style={S.label}>Asignar a deposito / barrica</label>
                   <select style={{...S.input,marginBottom:0,borderColor:m.depAsignado?C.accent:C.danger}}
                     value={m.depAsignado}
