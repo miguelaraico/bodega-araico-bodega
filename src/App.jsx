@@ -669,8 +669,9 @@ export default function BodegaApp() {
   };
 
   // Kg de vendimia sin prensar en un deposito (solo si aun no tiene litros ni ha habido llenado/trasiego)
-  // ── Asistente enologo: construye el contexto del deposito y pide avisos ────
-  const consultarEnologo = async (dep) => {
+  // Construye el texto de contexto de un deposito para el enologo, y una firma
+  // que cambia solo si hay datos nuevos (para no repetir consultas identicas).
+  const contextoEnologo = (dep) => {
     const id = dep.id;
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(id, fechaConsulta);
     const kg = kgVendimiaDe(id, fechaConsulta);
@@ -685,6 +686,7 @@ export default function BodegaApp() {
     L.push(`Deposito ${id} (${dep.capacidad||"?"} L de capacidad)`);
     L.push(`Tipo de vino: ${dep.tipoVino||"sin asignar"}${dep.anada?" | Añada "+dep.anada:""}${dep.etiqueta?" | "+dep.etiqueta:""}`);
     L.push(litros>0 ? `Contenido: ${litros} L` : (kg>0 ? `Contenido: ${kg} kg de uva sin prensar` : "Contenido: vacio"));
+    if(dep.fermentacionTerminada) L.push("Estado: fermentacion marcada como TERMINADA (vino en reposo/crianza)");
     if(dep.curvaInicial||dep.curvaObjetivo||dep.curvaDias)
       L.push(`Curva teorica prevista: de ${densView(dep.curvaInicial)} a ${densView(dep.curvaObjetivo)} en ${dep.curvaDias} dias`);
     L.push(`Fecha de hoy: ${fechaConsulta}`);
@@ -706,9 +708,18 @@ export default function BodegaApp() {
     anls.forEach(o=>L.push(`  ${o.fecha}: pH ${o.ph||"-"}, ac.tartarica ${o.acidez||"-"} g/L, ac.acetico ${o.acidezV||"-"} g/L, malico ${o.acidoMalico||"-"} g/L, alcohol ${o.alcohol||"-"}%, azucares ${o.azucares||"-"} g/L, SO2 libre ${o.so2libre||"-"} mg/L`));
 
     const contexto = L.join("\n");
-    const hash = contexto.length+"_"+ferm.length+"_"+prods.length;
+    // Firma: cambia si cambian los datos relevantes o la fecha de consulta
+    const firma = [id, fechaConsulta, ferm.length, prods.length, anls.length,
+                   ferm.map(o=>o.fecha+o.densidad+o.temperatura).join("|"),
+                   litros, kg, dep.fermentacionTerminada?1:0].join("~");
+    return {contexto, firma};
+  };
 
-    setAvisosEnologo(p=>({...p,[id]:{cargando:true,avisos:null,error:null,hash}}));
+  const consultarEnologo = async (dep) => {
+    const id = dep.id;
+    const {contexto, firma} = contextoEnologo(dep);
+
+    setAvisosEnologo(p=>({...p,[id]:{cargando:true,avisos:null,error:null,hash:firma}}));
     try {
       const r = await fetch("/api/enologo", {
         method:"POST", headers:{"Content-Type":"application/json"},
@@ -716,11 +727,28 @@ export default function BodegaApp() {
       });
       const data = await r.json();
       if(!r.ok) throw new Error(data.error||"Error desconocido");
-      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:data.avisos||[],error:null,hash}}));
+      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:data.avisos||[],error:null,hash:firma}}));
     } catch(e) {
-      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:null,error:String(e.message||e),hash}}));
+      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:null,error:String(e.message||e),hash:firma}}));
     }
   };
+
+  // Revision automatica al abrir la ficha de un deposito CON CONTENIDO.
+  // Solo consulta si los datos han cambiado desde la ultima revision (firma distinta),
+  // asi no se gasta una consulta cada vez que se entra a mirar el mismo deposito.
+  useEffect(()=>{
+    if(cargando||!selId||vista!=="ficha") return;
+    const dep = [...depositos,...barricas].find(d=>d.id===selId);
+    if(!dep) return;
+    const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
+    const kg = kgVendimiaDe(dep.id, fechaConsulta);
+    if(litros<=0 && kg<=0) return; // deposito vacio: nada que analizar
+    const est = avisosEnologo[dep.id];
+    if(est?.cargando) return;
+    const {firma} = contextoEnologo(dep);
+    if(est && est.hash===firma) return; // ya analizado con estos mismos datos
+    consultarEnologo(dep);
+  },[selId, vista, cargando, operaciones, fechaConsulta]);
 
   const kgVendimiaDe = (id, hastaFecha) => {
     const hasta = hastaFecha || hoy();
@@ -1147,6 +1175,48 @@ export default function BodegaApp() {
             </>}
           </div>
 
+          {/* Asistente enologo: revision automatica del deposito */}
+          {(()=>{
+            const litrosDep = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
+            const kgDep = kgVendimiaDe(dep.id, fechaConsulta);
+            if(litrosDep<=0 && kgDep<=0) return null;   // deposito vacio: nada que revisar
+            const est = avisosEnologo[dep.id];
+            const nivelColor = {alto:C.danger, medio:C.gold, info:C.accent};
+            const hayAvisos = est?.avisos && est.avisos.length>0;
+            return (
+              <div style={{...S.card,marginBottom:12,borderColor:hayAvisos?C.gold:"#3A4A5E"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>Revision del enologo</div>
+                    <div style={{fontSize:11,color:C.muted}}>
+                      {est?.cargando?"Analizando el seguimiento...":"Se revisa sola al registrar datos nuevos"}
+                    </div>
+                  </div>
+                  <Btn variant="ghost" small onClick={()=>consultarEnologo(dep)}>
+                    {est?.cargando?"...":"Analizar"}
+                  </Btn>
+                </div>
+
+                {est?.error&&<div style={{fontSize:12,color:C.danger,marginTop:10}}>{est.error}</div>}
+
+                {est?.avisos&&est.avisos.length===0&&
+                  <div style={{fontSize:12,color:C.accent,marginTop:10}}>Sin incidencias: todo va segun lo previsto</div>}
+
+                {hayAvisos&&<div style={{marginTop:10}}>
+                  {est.avisos.map((a,i)=>(
+                    <div key={i} style={{borderLeft:"3px solid "+(nivelColor[a.nivel]||C.muted),paddingLeft:10,marginBottom:10}}>
+                      <div style={{fontSize:13,fontWeight:700,color:nivelColor[a.nivel]||C.text}}>{a.titulo}</div>
+                      <div style={{fontSize:12,color:C.muted,marginTop:2}}>{a.detalle}</div>
+                    </div>
+                  ))}
+                  <div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>
+                    Sugerencias automaticas — la decision final es tuya.
+                  </div>
+                </div>}
+              </div>
+            );
+          })()}
+
           {/* Fermentacion: curva teorica vs real + productos añadidos del lote actual */}
           {(litros>0||kgVendimia>0) && (()=>{
             const isBarrica = barricas.some(b=>b.id===dep.id);
@@ -1239,41 +1309,6 @@ export default function BodegaApp() {
                 </div>
                 <div style={{height:8}}/>
 
-                {/* Asistente enologo: revision de la fermentacion */}
-                {(()=>{
-                  const est = avisosEnologo[dep.id];
-                  const nivelColor = {alto:C.danger, medio:C.gold, info:C.accent};
-                  return (
-                    <div style={{...S.card,marginBottom:12,borderColor:"#3A4A5E"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <div>
-                          <div style={{fontSize:13,fontWeight:700,color:C.text}}>🍇 Revision del enologo</div>
-                          <div style={{fontSize:11,color:C.muted}}>Analiza el seguimiento y avisa si detecta algo</div>
-                        </div>
-                        <Btn variant="ghost" small onClick={()=>consultarEnologo(dep)}>
-                          {est?.cargando?"Analizando...":(est?"Revisar de nuevo":"Revisar")}
-                        </Btn>
-                      </div>
-
-                      {est?.error&&<div style={{fontSize:12,color:C.danger,marginTop:10}}>{est.error}</div>}
-
-                      {est?.avisos&&est.avisos.length===0&&
-                        <div style={{fontSize:12,color:C.accent,marginTop:10}}>✓ Sin incidencias: la fermentacion va segun lo previsto</div>}
-
-                      {est?.avisos&&est.avisos.length>0&&<div style={{marginTop:10}}>
-                        {est.avisos.map((a,i)=>(
-                          <div key={i} style={{borderLeft:"3px solid "+(nivelColor[a.nivel]||C.muted),paddingLeft:10,marginBottom:10}}>
-                            <div style={{fontSize:13,fontWeight:700,color:nivelColor[a.nivel]||C.text}}>{a.titulo}</div>
-                            <div style={{fontSize:12,color:C.muted,marginTop:2}}>{a.detalle}</div>
-                          </div>
-                        ))}
-                        <div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>
-                          Sugerencias automaticas — la decision final es tuya.
-                        </div>
-                      </div>}
-                    </div>
-                  );
-                })()}
 
                 {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
                   {pasosPendientes.map(step=>(
@@ -2423,8 +2458,23 @@ export default function BodegaApp() {
               const matchAnada = filtroAnada==="todas" || (depConEtiqueta.anada||"")=== filtroAnada;
               const resaltado  = (filtroTipo==="todos" && filtroAnada==="todas") ? true : matchTipo && matchAnada;
               return (
-                <Tanque key={dep.id} dep={depConEtiqueta} litros={litros} resaltado={resaltado}
-                  onClick={()=>{setSelId(dep.id);setVista("ficha");}}/>
+                <div key={dep.id} style={{position:"relative"}}>
+                  <Tanque dep={depConEtiqueta} litros={litros} resaltado={resaltado}
+                    onClick={()=>{setSelId(dep.id);setVista("ficha");}}/>
+                  {(()=>{
+                    const av = avisosEnologo[dep.id]?.avisos;
+                    if(!av||av.length===0) return null;
+                    const alto = av.some(a=>a.nivel==="alto");
+                    return (
+                      <div title={av.map(a=>a.titulo).join(" · ")}
+                        style={{position:"absolute",top:-2,right:6,width:16,height:16,borderRadius:8,
+                          background:alto?C.danger:C.gold,color:"#0F1923",fontSize:11,fontWeight:700,
+                          display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                        !
+                      </div>
+                    );
+                  })()}
+                </div>
               );
             })}
           </div>
