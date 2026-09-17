@@ -2259,7 +2259,11 @@ export default function BodegaApp() {
               const kgVendimia = litros===0 && !tieneOperLlenado ? operaciones
                 .filter(o=>o.depId===dep.id&&o.tipo==="vendimia"&&o.fecha<=fechaConsulta)
                 .reduce((s,o)=>s+parseFloat(o.kg||0),0) : 0;
-              const depConEtiqueta = {...dep, ...infoEtiqueta, _kgVendimia:kgVendimia};
+              // etiquetaActual() devuelve vacio cuando el deposito no tiene LITROS (p.ej. uva sin
+              // prensar). En ese caso no debe machacar el tipo/etiqueta guardados en el deposito,
+              // o el tanque se pintaria gris pese a tener uva dentro.
+              const etiquetaUtil = (infoEtiqueta.tipoVino||infoEtiqueta.etiqueta) ? infoEtiqueta : {};
+              const depConEtiqueta = {...dep, ...etiquetaUtil, _kgVendimia:kgVendimia};
               const matchTipo  = filtroTipo==="todos"  || (depConEtiqueta.tipoVino||"")=== filtroTipo;
               const matchAnada = filtroAnada==="todas" || (depConEtiqueta.anada||"")=== filtroAnada;
               const resaltado  = (filtroTipo==="todos" && filtroAnada==="todas") ? true : matchTipo && matchAnada;
