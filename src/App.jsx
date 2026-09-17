@@ -259,6 +259,10 @@ const normDensidad = (v) => v.replace(",",".").replace(/[^0-9.]/g,"");
 // Corrige lecturas de densidad guardadas antes del fix de coma/punto (ej. "1090" en vez de "1.090").
 // Una densidad de vino real nunca supera 10, asi que cualquier valor mayor se interpreta sin el punto.
 const densOk = v => { const n = parseFloat(v); if(isNaN(n)) return NaN; return n>10 ? n/1000 : n; };
+// Miguel introduce las densidades en formato 1100 / 999 (g/L sin decimales).
+// densView() deja cualquier valor en ESA escala, se haya escrito como 1,100 o como 1100,
+// para que el grafico y las etiquetas se vean igual que como el las teclea.
+const densView = v => { const n = parseFloat(String(v).replace(",",".")); if(isNaN(n)) return NaN; return n<10 ? Math.round(n*1000) : n; };
 
 // Extrae {valor, unidadNum, unidadDen} de un texto de dosis tipo "2,5 g/hL", "0,10 g/L", "0,2 g/kg"
 const parseDosis = (texto) => {
@@ -311,7 +315,7 @@ const curvaCinetica = (inicial, objetivo, dias) => {
 // acentos o espacios ("Tartárico" / "tartarico " / "TARTARICO" deben sumar juntos)
 const normProducto = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().replace(/\s+/g," ");
 const textoMomento = step => step.momento==="densidad"
-  ? "densidad "+(step.densidadMin===step.densidadMax?step.densidadMin:step.densidadMin+"-"+step.densidadMax)
+  ? "densidad "+(step.densidadMin===step.densidadMax?densView(step.densidadMin):densView(step.densidadMin)+"-"+densView(step.densidadMax))
   : "al inicio del lote";
 
 // Calcula la dosis equivalente (texto) a partir de una cantidad total añadida.
@@ -1109,10 +1113,10 @@ export default function BodegaApp() {
               return (t-t0)/86400000;
             };
 
-            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:o.densidad?densOk(o.densidad):null})).filter(d=>!isNaN(d.dia)&&d.densidad!=null&&!isNaN(d.densidad));
+            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:o.densidad?densView(o.densidad):null})).filter(d=>!isNaN(d.dia)&&d.densidad!=null&&!isNaN(d.densidad));
             const tempData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), temperatura:o.temperatura!=null&&o.temperatura!==""?parseFloat(o.temperatura):null})).filter(d=>!isNaN(d.dia)&&d.temperatura!=null&&!isNaN(d.temperatura)&&d.temperatura>=-5&&d.temperatura<=45);
-            const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densOk(dep.curvaInicial) : null;
-            const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densOk(dep.curvaObjetivo) : null;
+            const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densView(dep.curvaInicial) : null;
+            const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densView(dep.curvaObjetivo) : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
             const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? curvaCinetica(cInicial, cObjetivo, cDias) : [];
             const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), ...tempData.map(d=>d.dia), 1);
