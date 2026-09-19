@@ -1417,10 +1417,22 @@ export default function BodegaApp() {
                         <LineChart data={chartData} margin={{top:5,right:10,left:-10,bottom:5}}>
                           <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
                           <XAxis dataKey="dia" type="number" domain={[0,maxDia]} allowDecimals={false}
-                            tick={{fill:C.muted,fontSize:11}} label={{value:"Dia",position:"insideBottom",offset:-3,fill:C.muted,fontSize:11}}/>
+                            tickFormatter={d=>{
+                              if(!fechaInicio) return d;
+                              const f = new Date(fechaInicio+"T00:00:00");
+                              f.setDate(f.getDate()+Math.round(d));
+                              return String(f.getDate()).padStart(2,"0")+"/"+String(f.getMonth()+1).padStart(2,"0");
+                            }}
+                            tick={{fill:C.muted,fontSize:10}}/>
                           <YAxis yAxisId="densidad" domain={["auto","auto"]} tick={{fill:C.muted,fontSize:11}} width={45}/>
                           {tempData.length>0&&<YAxis yAxisId="temp" orientation="right" domain={[Math.min(10,...tempData.map(d=>d.temperatura)),Math.max(30,...tempData.map(d=>d.temperatura))]} tick={{fill:C.danger,fontSize:11}} width={35} label={{value:"°C",position:"insideTopRight",fill:C.danger,fontSize:10}}/>}
-                          <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}/>
+                          <Tooltip contentStyle={{background:"#0A1218",border:"1px solid "+C.border,fontSize:12}}
+                            labelFormatter={d=>{
+                              if(!fechaInicio) return "Dia "+d;
+                              const f = new Date(fechaInicio+"T00:00:00");
+                              f.setDate(f.getDate()+Math.round(d));
+                              return fmtF(f.toISOString().slice(0,10))+" (dia "+Math.round(d)+")";
+                            }}/>
                           <Legend wrapperStyle={{fontSize:11}}/>
                           {teoricaData.length>0&&<Line yAxisId="densidad" dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
                           {realData.length>0&&<Line yAxisId="densidad" dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
