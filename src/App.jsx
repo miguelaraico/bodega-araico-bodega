@@ -1600,6 +1600,7 @@ export default function BodegaApp() {
                   </div>}
                 </div>}
                 {op.litros&&<div style={{fontSize:13,color:C.text}}>{fmtL(op.litros)}{op.kg?" / "+fmtK(op.kg):""}</div>}
+                {!op.litros&&op.kg&&<div style={{fontSize:13,fontWeight:700,color:C.text}}>{fmtK(op.kg)} kg de uva</div>}
                 {op.variedad&&<div style={{fontSize:12,color:C.muted}}>{op.variedad}{op.campana?" - "+op.campana:""}{op.grado?" - "+op.grado+" Gr":""}</div>}
                 {op.producto&&<div style={{fontSize:12,color:C.muted}}>{op.producto}{(op.dosisTeorica||op.dosisReal)?" - T: "+(op.dosisTeorica||"-")+" / R: "+(op.dosisReal||"-"):(op.dosis?" - "+op.dosis:"")}</div>}
                 {op.temperatura&&<div style={{fontSize:12,color:C.muted}}>Temp: {op.temperatura} C</div>}
@@ -2685,6 +2686,7 @@ export default function BodegaApp() {
                   <span style={{fontSize:11,color:C.muted}}>{fmtF(op.fecha)}</span>
                 </div>
                 {op.litros&&<div style={{fontSize:13}}>{fmtL(op.litros)}{op.kg?" / "+fmtK(op.kg):""}</div>}
+                {!op.litros&&op.kg&&<div style={{fontSize:13,fontWeight:700}}>{fmtK(op.kg)} kg de uva</div>}
                 {op.botellas&&!op.litros&&<div style={{fontSize:13}}>{op.botellas} unidades</div>}
                 {op.etiqueta&&<div style={{fontSize:12,color:C.gold}}>{op.etiqueta}{op.anada?" "+op.anada:""}</div>}
                 {op.variedad&&<div style={{fontSize:12,color:C.muted}}>{op.variedad}{op.campana?" "+op.campana:""}</div>}
