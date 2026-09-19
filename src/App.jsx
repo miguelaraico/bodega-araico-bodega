@@ -1355,10 +1355,26 @@ export default function BodegaApp() {
             const currentDensidad = opsFermentacion.length>0 ? densOk(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
             const protocoloActivo = loteReciente ? (protocolos[dep.tipoVino||""] || []) : [];
             const omitidos = dep.protocoloOmitidos || [];
+            // Fecha de la ultima entrada de uva (vendimia) del lote: si se ha metido uva nueva
+            // DESPUES de confirmar un paso "al inicio del lote", ese paso vuelve a pedirse
+            // (Miguel llena un deposito en varios dias y adiciona en cada aporte).
+            const ultimaVendimia = histLoteActual
+              .filter(o=>o.tipo==="vendimia")
+              .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
+
             const pasosPendientes = protocoloActivo.filter(step=>{
               if(omitidos.includes(step.id)) return false;
               if(recordatoriosOcultos.includes(step.id)) return false;
-              if(histLoteActual.some(o=>o.protocoloStepId===step.id)) return false;
+              const hechos = histLoteActual.filter(o=>o.protocoloStepId===step.id);
+              if(hechos.length>0) {
+                // Para pasos de inicio: si hay una vendimia posterior al ultimo aporte, volver a avisar
+                if(step.momento==="inicio" && ultimaVendimia) {
+                  const ultimoAporte = hechos.sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
+                  const hayUvaNueva = ultimaVendimia.fecha>ultimoAporte.fecha ||
+                    (ultimaVendimia.fecha===ultimoAporte.fecha && ultimaVendimia.id>ultimoAporte.id);
+                  if(!hayUvaNueva) return false;
+                } else return false;
+              }
               if(step.momento==="inicio") return true;
               if(step.momento==="densidad") return currentDensidad!=null && currentDensidad<=step.densidadMax;
               return false;
@@ -1368,7 +1384,12 @@ export default function BodegaApp() {
               else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,protocoloOmitidos:[...(d.protocoloOmitidos||[]),stepId]}:d));
             };
             const confirmarPaso = step => {
-              const sugerido = calcularCantidad(step.dosis, litros, kgVendimia);
+              // Si el paso ya se hizo antes y se pide de nuevo por haber entrado uva nueva,
+              // la dosis se calcula SOLO sobre los kg de esa vendimia nueva, no sobre el total.
+              const yaHecho = histLoteActual.some(o=>o.protocoloStepId===step.id);
+              const kgBase = (yaHecho && step.momento==="inicio" && ultimaVendimia)
+                ? parseFloat(ultimaVendimia.kg||0) : kgVendimia;
+              const sugerido = calcularCantidad(step.dosis, yaHecho?0:litros, kgBase);
               setFormOp({depId:dep.id, fecha:hoy(), tipo:"aditivo_fermentacion",
                 producto:"Otro", productoOtro:step.producto,
                 dosisTeorica:step.dosis,
@@ -1396,12 +1417,20 @@ export default function BodegaApp() {
 
 
                 {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
-                  {pasosPendientes.map(step=>(
+                  {pasosPendientes.map(step=>{
+                    const yaHecho = histLoteActual.some(o=>o.protocoloStepId===step.id);
+                    const kgBase = (yaHecho && step.momento==="inicio" && ultimaVendimia)
+                      ? parseFloat(ultimaVendimia.kg||0) : kgVendimia;
+                    const c = calcularCantidad(step.dosis, yaHecho?0:litros, kgBase);
+                    return (
                     <div key={step.id} style={{...S.card,borderColor:C.gold,background:"rgba(200,169,110,0.08)",marginBottom:6,padding:"10px 12px"}}>
-                      <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{step.producto}</div>
+                      <div style={{fontSize:13,fontWeight:700,color:C.gold}}>
+                        {step.producto}
+                        {yaHecho&&<span style={{fontSize:11,fontWeight:400,color:C.accent}}> · por uva nueva</span>}
+                      </div>
                       <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
-                        {step.dosis} · {textoMomento(step)}
-                        {(()=>{const c=calcularCantidad(step.dosis,litros,kgVendimia); return c?<span style={{color:C.gold,fontWeight:700}}> · Total: {fmtCantidad(c)}</span>:null;})()}
+                        {step.dosis} · {yaHecho&&ultimaVendimia?"sobre los "+fmtK(ultimaVendimia.kg)+" kg del "+fmtF(ultimaVendimia.fecha):textoMomento(step)}
+                        {c?<span style={{color:C.gold,fontWeight:700}}> · Total: {fmtCantidad(c)}</span>:null}
                       </div>
                       <div style={{display:"flex",gap:6}}>
                         <Btn variant="gold" small onClick={()=>confirmarPaso(step)}>Ya lo eché</Btn>
@@ -1409,7 +1438,7 @@ export default function BodegaApp() {
                         <Btn variant="ghost" small onClick={()=>setRecordatoriosOcultos(prev=>[...prev,step.id])}>Esperar</Btn>
                       </div>
                     </div>
-                  ))}
+                  );})}
                 </div>}
 
                 <div style={S.card}>
