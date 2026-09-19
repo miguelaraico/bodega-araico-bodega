@@ -791,10 +791,27 @@ export default function BodegaApp() {
   // contenido, es un aporte al mismo lote, no un lote nuevo (evita "olvidar" el seguimiento
   // de fermentacion al meter una entrada a granel de mas en un deposito ya en marcha).
   const esInicioDeLote = (op, id) => {
-    const d = new Date(op.fecha+"T00:00:00");
-    d.setDate(d.getDate()-1);
-    const antes = d.toISOString().slice(0,10);
-    return litrosActuales(id, antes)<=0 && kgVendimiaDe(id, antes)<=0;
+    // Comprobar el estado del deposito JUSTO ANTES de esta operacion concreta:
+    // todo lo anterior en fecha, y lo del mismo dia que se registro antes que ella.
+    const previas = operaciones.filter(o=>
+      (o.depId===id||o.depDestino===id) &&
+      (o.fecha<op.fecha || (o.fecha===op.fecha && o.id<op.id))
+    );
+    // ¿Alguna de esas previas dejo contenido en el deposito?
+    const ENTRADAS = ["vendimia","llenado","entrada_granel"];
+    const SALIDAS  = ["embotellado","salida_granel"];
+    let litros = 0, kg = 0;
+    previas.sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id).forEach(o=>{
+      if(o.tipo==="vendimia")                      kg += parseFloat(o.kg||0);
+      else if(ENTRADAS.includes(o.tipo)&&o.depId===id) { litros += parseFloat(o.litros||0); kg = 0; }
+      else if(o.tipo==="prensado"&&o.depId===id)   kg = 0;
+      else if(o.tipo==="trasiego") {
+        if(o.depDestino===id) litros += parseFloat(o.litros||0);
+        if(o.depId===id)      litros -= parseFloat(o.litros||0);
+      }
+      else if(SALIDAS.includes(o.tipo)&&o.depId===id) litros -= parseFloat(o.litros||0)+parseFloat(o.merma||0);
+    });
+    return litros<=0 && kg<=0;
   };
 
   const histDep = (id, hastaFecha, soloActual) => {
