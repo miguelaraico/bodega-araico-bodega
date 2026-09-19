@@ -494,7 +494,7 @@ export default function BodegaApp() {
   const [guardando,    setGuardando]    = useState(false);
   const [vista,        setVista]        = useState("lista");
   const [selId,        setSelId]        = useState(null);
-  useEffect(()=>{ setRecordatoriosOcultos([]); },[selId]);
+  useEffect(()=>{ setRecordatoriosOcultos([]); setPreguntaChat(""); },[selId]);
   const [formOp,       setFormOp]       = useState({});
   const [filtroTipo,   setFiltroTipo]   = useState("todos");
   const [filtroAnada,  setFiltroAnada]  = useState("todas");
@@ -507,6 +507,9 @@ export default function BodegaApp() {
   const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
   const [verStockInicial, setVerStockInicial] = useState(false);
   const [avisosEnologo, setAvisosEnologo] = useState({}); // {depId: {cargando, avisos, error, hash}}
+  const [chatEnologo, setChatEnologo] = useState({});     // {depId: [{rol, texto}]}
+  const [preguntaChat, setPreguntaChat] = useState("");
+  const [chatCargando, setChatCargando] = useState(false);
   const [ventas,       setVentas]       = useState([]);
   const [orujosAjuste,  setOrujosAjuste]  = useState(0); // correccion manual, se suma a lo calculado desde las operaciones de prensado
   const [materiales,   setMateriales]   = useState({
@@ -713,6 +716,30 @@ export default function BodegaApp() {
                    ferm.map(o=>o.fecha+o.densidad+o.temperatura).join("|"),
                    litros, kg, dep.fermentacionTerminada?1:0].join("~");
     return {contexto, firma};
+  };
+
+  // Enviar una pregunta libre al enologo sobre este deposito
+  const preguntarEnologo = async (dep, texto) => {
+    const id = dep.id;
+    const pregunta = (texto||"").trim();
+    if(!pregunta||chatCargando) return;
+    const {contexto} = contextoEnologo(dep);
+    const historial = chatEnologo[id]||[];
+
+    setChatEnologo(p=>({...p,[id]:[...historial,{rol:"user",texto:pregunta}]}));
+    setPreguntaChat("");
+    setChatCargando(true);
+    try {
+      const r = await fetch("/api/enologo", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({contexto, pregunta, historial}),
+      });
+      const data = await r.json();
+      if(!r.ok) throw new Error(data.error||"Error desconocido");
+      setChatEnologo(p=>({...p,[id]:[...(p[id]||[]),{rol:"enologo",texto:data.respuesta||"(sin respuesta)"}]}));
+    } catch(e) {
+      setChatEnologo(p=>({...p,[id]:[...(p[id]||[]),{rol:"error",texto:String(e.message||e)}]}));
+    } finally { setChatCargando(false); }
   };
 
   const consultarEnologo = async (dep) => {
@@ -1213,6 +1240,47 @@ export default function BodegaApp() {
                     Sugerencias automaticas — la decision final es tuya.
                   </div>
                 </div>}
+
+                {/* Chat: preguntar al enologo sobre este deposito */}
+                {(()=>{
+                  const chat = chatEnologo[dep.id]||[];
+                  return (
+                    <div style={{marginTop:12,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                      {chat.length>0&&<div style={{marginBottom:8,maxHeight:260,overflowY:"auto"}}>
+                        {chat.map((m,i)=>(
+                          <div key={i} style={{marginBottom:8,textAlign:m.rol==="user"?"right":"left"}}>
+                            <div style={{display:"inline-block",maxWidth:"88%",textAlign:"left",
+                              background:m.rol==="user"?"#1A2535":"transparent",
+                              border:m.rol==="user"?"1px solid "+C.border:"none",
+                              borderLeft:m.rol==="enologo"?"3px solid "+C.accent:undefined,
+                              borderRadius:m.rol==="user"?8:0,
+                              padding:m.rol==="user"?"6px 10px":"0 0 0 10px",
+                              fontSize:12.5,color:m.rol==="error"?C.danger:C.text,whiteSpace:"pre-wrap",lineHeight:1.45}}>
+                              {m.texto}
+                            </div>
+                          </div>
+                        ))}
+                        {chatCargando&&<div style={{fontSize:12,color:C.muted,paddingLeft:10}}>Pensando...</div>}
+                      </div>}
+
+                      <div style={{display:"flex",gap:6}}>
+                        <input type="text" style={{...S.input,flex:1,marginBottom:0}}
+                          placeholder="Pregunta al enologo sobre este deposito..."
+                          value={preguntaChat}
+                          onChange={e=>setPreguntaChat(e.target.value)}
+                          onKeyDown={e=>{ if(e.key==="Enter") preguntarEnologo(dep,preguntaChat); }}/>
+                        <Btn variant="gold" small onClick={()=>preguntarEnologo(dep,preguntaChat)}>
+                          {chatCargando?"...":"Enviar"}
+                        </Btn>
+                      </div>
+                      {chat.length>0&&
+                        <button onClick={()=>setChatEnologo(p=>({...p,[dep.id]:[]}))}
+                          style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",marginTop:6,padding:0}}>
+                          Borrar conversacion
+                        </button>}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
