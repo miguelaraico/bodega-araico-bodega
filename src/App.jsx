@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 
 // ── Claude API para leer PDFs ─────────────────────────────────────────────────
 const leerAnalisisPDF = async (base64, mediaType) => {
@@ -298,6 +298,17 @@ const calcularCantidad = (dosisTexto, litros, kgReal) => {
 const fmtCantidad = c => c==null?"":(c.cantidad<10?c.cantidad.toFixed(2):Math.round(c.cantidad).toLocaleString("es-ES"))+" "+c.unidad+(c.estimado?" (estimado)":"");
 // Curva teorica de cinetica de fermentacion: sigmoide (lenta-rapida-lenta), no una recta.
 // Genera un punto por dia entre densidad inicial y objetivo a lo largo de "dias".
+// Valor de la curva cinetica (sigmoide) en un instante t cualquiera, 0 <= t <= dias
+const valorCinetica = (inicial, objetivo, dias, t) => {
+  if(!dias||dias<=0) return objetivo;
+  const k = 10/dias, tMid = dias/2;
+  const sig = x => 1/(1+Math.exp(-k*(x-tMid)));
+  const s0 = sig(0), s1 = sig(dias);
+  const tt = Math.max(0, Math.min(dias, t));
+  return inicial-(inicial-objetivo)*((sig(tt)-s0)/(s1-s0));
+};
+// Una densidad (en escala 1100/995) solo es valida para la curva si esta en rango de mosto/vino
+const densValida = v => v!=null && !isNaN(v) && v>=900 && v<=1200;
 const curvaCinetica = (inicial, objetivo, dias) => {
   if(!dias||dias<=0) return [{dia:0,densidad:inicial}];
   const k = 10/dias; // pendiente de la "S": mayor dias -> curva mas suave
@@ -1369,21 +1380,66 @@ export default function BodegaApp() {
               return (t-t0)/86400000;
             };
 
-            const realData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:o.densidad?densView(o.densidad):null})).filter(d=>!isNaN(d.dia)&&d.densidad!=null&&!isNaN(d.densidad));
+            const lecturas = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), densidad:o.densidad?densView(o.densidad):null, heredada:!!o._heredadoDe}))
+              .filter(d=>!isNaN(d.dia)&&densValida(d.densidad));
             const tempData = opsFermentacion.map(o=>({dia:diaDe(o.fecha,o.hora), temperatura:o.temperatura!=null&&o.temperatura!==""?parseFloat(o.temperatura):null})).filter(d=>!isNaN(d.dia)&&d.temperatura!=null&&!isNaN(d.temperatura)&&d.temperatura>=-5&&d.temperatura<=45);
-            const cInicial  = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densView(dep.curvaInicial) : null;
-            const cObjetivo = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densView(dep.curvaObjetivo) : null;
+
+            // Curva teorica: se ignoran valores fuera de rango (p.ej. una temperatura metida por error)
+            const cIniRaw = dep.curvaInicial!==undefined && dep.curvaInicial!=="" ? densView(dep.curvaInicial) : null;
+            const cObjRaw = dep.curvaObjetivo!==undefined && dep.curvaObjetivo!=="" ? densView(dep.curvaObjetivo) : null;
+            const cInicial  = densValida(cIniRaw) ? cIniRaw : null;
+            const cObjetivo = densValida(cObjRaw) ? cObjRaw : null;
             const cDias     = dep.curvaDias!==undefined && dep.curvaDias!=="" ? parseFloat(dep.curvaDias) : null;
-            const teoricaData = (cInicial!=null&&cObjetivo!=null&&cDias) ? curvaCinetica(cInicial, cObjetivo, cDias) : [];
-            const maxDia = Math.max(cDias||0, ...realData.map(d=>d.dia), ...tempData.map(d=>d.dia), 1);
-            // Dataset combinado (un unico array para el LineChart) para que las lineas se dibujen bien
-            const diasCombinados = Array.from(new Set([...teoricaData.map(d=>d.dia), ...realData.map(d=>d.dia), ...tempData.map(d=>d.dia)])).sort((a,b)=>a-b);
-            const chartData = diasCombinados.map(dia=>({
-              dia,
-              real: realData.find(d=>d.dia===dia)?.densidad ?? null,
-              teorica: teoricaData.find(d=>d.dia===dia)?.densidad ?? null,
-              temp: tempData.find(d=>d.dia===dia)?.temperatura ?? null,
-            }));
+            const avisoCurva = (cIniRaw!=null&&cInicial==null) ? "La densidad inicial no parece valida ("+dep.curvaInicial+")"
+                             : (cObjRaw!=null&&cObjetivo==null) ? "La densidad objetivo no parece valida ("+dep.curvaObjetivo+")" : "";
+            const hayTeorica = cInicial!=null&&cObjetivo!=null&&cDias>0;
+
+            // ¿Este lote viene de un prensado de otro deposito? Entonces hay dos tramos:
+            // antes del prensado (lecturas heredadas del origen) y despues (lecturas de este deposito).
+            const lectAntes   = orgPrensado ? lecturas.filter(l=>l.heredada)  : lecturas;
+            const lectDespues = orgPrensado ? lecturas.filter(l=>!l.heredada) : [];
+            const diaPrensado = orgPrensado
+              ? (lectDespues.length ? Math.min(...lectDespues.map(l=>l.dia)) : diaDe(orgPrensado.fecha,"12:00"))
+              : null;
+            const densPrensada = lectDespues.length ? lectDespues.slice().sort((a,b)=>a.dia-b.dia)[0].densidad : null;
+
+            // Teorica tramo 1 (hasta el prensado, o completa si no hay prensado)
+            const finTramo1 = diaPrensado!=null ? Math.min(diaPrensado, cDias||0) : (cDias||0);
+            const teoricaData = [];
+            if(hayTeorica) {
+              for(let d=0; d<finTramo1; d+=1) teoricaData.push({dia:d, v:valorCinetica(cInicial,cObjetivo,cDias,d)});
+              teoricaData.push({dia:finTramo1, v:valorCinetica(cInicial,cObjetivo,cDias,finTramo1)});
+            }
+            // Teorica tramo 2: desde la densidad de la prensada hasta el objetivo
+            const diasTramo2 = (cDias&&diaPrensado!=null&&cDias-diaPrensado>=3) ? cDias-diaPrensado : 5;
+            const teoricaPost = [];
+            if(hayTeorica && diaPrensado!=null && densPrensada!=null) {
+              // punto puente para que se vea el repunte desde donde iba la curva
+              teoricaPost.push({dia:diaPrensado-0.05, v:valorCinetica(cInicial,cObjetivo,cDias,diaPrensado)});
+              for(let d=0; d<=Math.round(diasTramo2); d+=1)
+                teoricaPost.push({dia:diaPrensado+d, v:valorCinetica(densPrensada,cObjetivo,diasTramo2,d)});
+            }
+            // Real tramo 2: arranca desde la ultima lectura de antes, para que se vea la subida
+            const ultAntes = lectAntes.slice().sort((a,b)=>b.dia-a.dia)[0];
+            const realPost = lectDespues.length ? [...(ultAntes?[{dia:ultAntes.dia,densidad:ultAntes.densidad}]:[]), ...lectDespues] : [];
+
+            const maxDia = Math.max(cDias||0, ...lecturas.map(d=>d.dia), ...tempData.map(d=>d.dia),
+                                    ...teoricaPost.map(d=>d.dia), 1);
+
+            // Dataset combinado: una fila por instante, una columna por serie (nada se pisa)
+            const filas = new Map();
+            const poner = (dia,clave,valor) => {
+              const k = Math.round(dia*1000)/1000;
+              if(!filas.has(k)) filas.set(k,{dia:k});
+              filas.get(k)[clave] = valor;
+            };
+            lectAntes.forEach(l=>poner(l.dia,"real",l.densidad));
+            realPost.forEach(l=>poner(l.dia,"realPost",l.densidad));
+            teoricaData.forEach(t=>poner(t.dia,"teorica",Math.round(t.v*10)/10));
+            teoricaPost.forEach(t=>poner(t.dia,"teoricaPost",Math.round(t.v*10)/10));
+            tempData.forEach(t=>poner(t.dia,"temp",t.temperatura));
+            const chartData = [...filas.values()].sort((a,b)=>a.dia-b.dia);
+            const realData = lecturas; // compatibilidad con el resto de la seccion
 
             const setCurva = (campo,valor) => {
               if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,[campo]:valor}:b));
@@ -1504,7 +1560,7 @@ export default function BodegaApp() {
                       <input type="number" style={S.input} value={dep.curvaDias||""} onChange={e=>setCurva("curvaDias",e.target.value)}/>
                     </div>
                   </div>
-                  {(realData.length>0||teoricaData.length>0||tempData.length>0) ? (
+                  {(realData.length>0||teoricaData.length>0||tempData.length>0) ? (<>{avisoCurva&&<div style={{fontSize:12,color:C.danger,marginBottom:6}}>⚠ {avisoCurva}: no se dibuja la curva teorica. Revisa el campo.</div>}
                     <div style={{width:"100%",height:220}}>
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData} margin={{top:5,right:10,left:-10,bottom:5}}>
@@ -1528,11 +1584,14 @@ export default function BodegaApp() {
                             }}/>
                           <Legend wrapperStyle={{fontSize:11}}/>
                           {teoricaData.length>0&&<Line yAxisId="densidad" dataKey="teorica" name="Teorica" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
-                          {realData.length>0&&<Line yAxisId="densidad" dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {teoricaPost.length>0&&<Line yAxisId="densidad" dataKey="teoricaPost" name="Teorica tras prensado" legendType="none" stroke={C.gold} strokeDasharray="5 5" dot={false} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {lectAntes.length>0&&<Line yAxisId="densidad" dataKey="real" name="Real" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
+                          {realPost.length>0&&<Line yAxisId="densidad" dataKey="realPost" name="Real tras prensado" legendType="none" stroke={C.accent} strokeWidth={2} dot={{r:3}} type="linear" connectNulls isAnimationActive={false}/>}
+                          {diaPrensado!=null&&<ReferenceLine yAxisId="densidad" x={diaPrensado} stroke={C.muted} strokeDasharray="2 3" label={{value:"Prensado",position:"insideTopLeft",fill:C.muted,fontSize:10}}/>}
                           {tempData.length>0&&<Line yAxisId="temp" dataKey="temp" name="Temperatura" stroke={C.danger} strokeWidth={2} dot={{r:3}} type="monotone" connectNulls isAnimationActive={false}/>}
                         </LineChart>
                       </ResponsiveContainer>
-                    </div>
+                    </div></>
                   ) : (
                     <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>Rellena la curva teorica y/o registra densidades/temperaturas reales para ver el grafico</div>
                   )}
