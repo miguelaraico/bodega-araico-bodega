@@ -776,7 +776,7 @@ export default function BodegaApp() {
   // asi no se gasta una consulta cada vez que se entra a mirar el mismo deposito.
   useEffect(()=>{
     if(cargando||!selId||vista!=="ficha") return;
-    const dep = [...depositos,...barricas].find(d=>d.id===selId);
+    const dep = depConLote([...depositos,...barricas].find(d=>d.id===selId));
     if(!dep) return;
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
     const kg = kgVendimiaDe(dep.id, fechaConsulta);
@@ -848,7 +848,28 @@ export default function BodegaApp() {
     const ent = entradaLoteDe(id, hastaFecha);
     if(!ent || ent.tipo!=="llenado") return null;
     const origen = ent.prensadoDesde || ((ent.notas||"").match(/\[Prensado desde ([^\]\s]+)\]/)||[])[1];
-    return (origen && origen!==id) ? {origen, fecha:ent.fecha} : null;
+    return (origen && origen!==id) ? {origen, fecha:ent.fecha, llenadoId:ent.id, curvaLote:ent.curvaLote||null} : null;
+  };
+
+  // Deposito "visto como lote": si su vino viene de un prensado, completa los datos del vino con los
+  // del origen y toma SIEMPRE la curva teorica del lote (copia guardada en el prensado, o la del origen
+  // para prensados antiguos). Asi la curva es una sola por lote y no hay que repetirla en el destino.
+  const depConLote = (d) => {
+    if(!d) return d;
+    const org = origenPrensadoDe(d.id, fechaConsulta);
+    if(!org) return d;
+    const o = [...depositos,...barricas].find(x=>x.id===org.origen) || {};
+    const snap = org.curvaLote || {};
+    const lleno = v => v!==undefined && v!==null && v!=="";
+    const pick = k => lleno(snap[k]) ? snap[k] : (lleno(o[k]) ? o[k] : (d[k]||""));
+    return {...d,
+      tipoVino: d.tipoVino||o.tipoVino||"",
+      anada:    d.anada||o.anada||"",
+      etiqueta: d.etiqueta||o.etiqueta||"",
+      curvaInicial: pick("curvaInicial"), curvaObjetivo: pick("curvaObjetivo"), curvaDias: pick("curvaDias"),
+      protocoloOmitidos: (d.protocoloOmitidos&&d.protocoloOmitidos.length)?d.protocoloOmitidos:(o.protocoloOmitidos||[]),
+      _curvaDeLote: org.origen, _llenadoId: org.llenadoId,
+    };
   };
 
   const TIPOS_HEREDABLES = ["vendimia","analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","aditivo_fermentacion","otro"];
@@ -1176,19 +1197,8 @@ export default function BodegaApp() {
   if(vista==="ficha") {
     const depGuardado = todosContenedores.find(d=>d.id===selId);
     if(!depGuardado){setVista("lista");return null;}
-    // Si el lote viene de un prensado y a este deposito le faltan datos del vino
-    // (prensados hechos antes de que se traspasaran automaticamente), tomarlos del origen.
     const orgPrensado = origenPrensadoDe(depGuardado.id, fechaConsulta);
-    const depOrg = orgPrensado ? todosContenedores.find(d=>d.id===orgPrensado.origen) : null;
-    const dep = depOrg ? {...depGuardado,
-      tipoVino: depGuardado.tipoVino||depOrg.tipoVino||"",
-      anada:    depGuardado.anada||depOrg.anada||"",
-      etiqueta: depGuardado.etiqueta||depOrg.etiqueta||"",
-      curvaInicial:  depGuardado.curvaInicial||depOrg.curvaInicial||"",
-      curvaObjetivo: depGuardado.curvaObjetivo||depOrg.curvaObjetivo||"",
-      curvaDias:     depGuardado.curvaDias||depOrg.curvaDias||"",
-      protocoloOmitidos: (depGuardado.protocoloOmitidos&&depGuardado.protocoloOmitidos.length)?depGuardado.protocoloOmitidos:(depOrg.protocoloOmitidos||[]),
-    } : depGuardado;
+    const dep = depConLote(depGuardado);
     const esBarrica = barricas.some(b=>b.id===dep.id);
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
     const pct = dep.capacidad>0?Math.round((litros/dep.capacidad)*100):0;
@@ -1442,6 +1452,12 @@ export default function BodegaApp() {
             const realData = lecturas; // compatibilidad con el resto de la seccion
 
             const setCurva = (campo,valor) => {
+              if(dep._llenadoId) {
+                setOperaciones(prev=>prev.map(o=>o.id===dep._llenadoId?{...o,curvaLote:{
+                  curvaInicial:dep.curvaInicial, curvaObjetivo:dep.curvaObjetivo, curvaDias:dep.curvaDias,
+                  ...(o.curvaLote||{}), [campo]:valor}}:o));
+                return;
+              }
               if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,[campo]:valor}:b));
               else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,[campo]:valor}:d));
             };
@@ -1545,7 +1561,7 @@ export default function BodegaApp() {
                 </div>}
 
                 <div style={S.card}>
-                  <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Curva teorica — densidad inicial → objetivo en X dias</div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Curva teorica — densidad inicial → objetivo en X dias{dep._curvaDeLote&&<span style={{color:C.gold}}> · curva del lote de {dep._curvaDeLote}</span>}</div>
                   <div style={{display:"flex",gap:8,marginBottom:12}}>
                     <div style={{flex:1}}>
                       <label style={S.label}>Densidad inicial</label>
@@ -1929,6 +1945,7 @@ export default function BodegaApp() {
           anadaOrigen: f.anada||depOrigen?.anada||"",
           etiquetaOrigen: f.etiqueta||depOrigen?.etiqueta||"",
           prensadoDesde: f.depId||"",
+          curvaLote: depOrigen ? {curvaInicial:depOrigen.curvaInicial||"", curvaObjetivo:depOrigen.curvaObjetivo||"", curvaDias:depOrigen.curvaDias||""} : null,
           orujoKg: undefined,   // el orujo pertenece al prensado, no al llenado (evita contarlo dos veces)
           notas: (f.notas||"")+" [Prensado desde "+(f.depId||"prensa")+"]",
         };
@@ -1942,9 +1959,6 @@ export default function BodegaApp() {
               tipoVino: depOrigen.tipoVino||d.tipoVino||"",
               anada:    depOrigen.anada||d.anada||"",
               etiqueta: depOrigen.etiqueta||d.etiqueta||"",
-              curvaInicial:  depOrigen.curvaInicial||d.curvaInicial||"",
-              curvaObjetivo: depOrigen.curvaObjetivo||d.curvaObjetivo||"",
-              curvaDias:     depOrigen.curvaDias||d.curvaDias||"",
               protocoloOmitidos: [...(depOrigen.protocoloOmitidos||[])],
               fermentacionTerminada: !!depOrigen.fermentacionTerminada,
             };
