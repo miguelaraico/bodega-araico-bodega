@@ -505,7 +505,7 @@ export default function BodegaApp() {
   const [guardando,    setGuardando]    = useState(false);
   const [vista,        setVista]        = useState("lista");
   const [selId,        setSelId]        = useState(null);
-  useEffect(()=>{ setRecordatoriosOcultos([]); setPreguntaChat(""); },[selId]);
+  useEffect(()=>{ setRecordatoriosOcultos([]); setPreguntaChat(""); setChatAbierto(false); },[selId]);
   const [formOp,       setFormOp]       = useState({});
   const [filtroTipo,   setFiltroTipo]   = useState("todos");
   const [filtroAnada,  setFiltroAnada]  = useState("todas");
@@ -521,6 +521,7 @@ export default function BodegaApp() {
   const [chatEnologo, setChatEnologo] = useState({});     // {depId: [{rol, texto}]}
   const [preguntaChat, setPreguntaChat] = useState("");
   const [chatCargando, setChatCargando] = useState(false);
+  const [chatAbierto, setChatAbierto] = useState(false);
   const [ventas,       setVentas]       = useState([]);
   const [orujosAjuste,  setOrujosAjuste]  = useState(0); // correccion manual, se suma a lo calculado desde las operaciones de prensado
   const [materiales,   setMateriales]   = useState({
@@ -771,22 +772,7 @@ export default function BodegaApp() {
     }
   };
 
-  // Revision automatica al abrir la ficha de un deposito CON CONTENIDO.
-  // Solo consulta si los datos han cambiado desde la ultima revision (firma distinta),
-  // asi no se gasta una consulta cada vez que se entra a mirar el mismo deposito.
-  useEffect(()=>{
-    if(cargando||!selId||vista!=="ficha") return;
-    const dep = depConLote([...depositos,...barricas].find(d=>d.id===selId));
-    if(!dep) return;
-    const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
-    const kg = kgVendimiaDe(dep.id, fechaConsulta);
-    if(litros<=0 && kg<=0) return; // deposito vacio: nada que analizar
-    const est = avisosEnologo[dep.id];
-    if(est?.cargando) return;
-    const {firma} = contextoEnologo(dep);
-    if(est && est.hash===firma) return; // ya analizado con estos mismos datos
-    consultarEnologo(dep);
-  },[selId, vista, cargando, operaciones, fechaConsulta]);
+  // (La revision del enologo es solo bajo demanda: boton Analizar en la ficha)
 
   const kgVendimiaDe = (id, hastaFecha) => {
     const hasta = hastaFecha || hoy();
@@ -1329,15 +1315,13 @@ export default function BodegaApp() {
             return (
               <div style={{...S.card,marginBottom:12,borderColor:hayAvisos?C.gold:"#3A4A5E"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div>
-                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>Revision del enologo</div>
-                    <div style={{fontSize:11,color:C.muted}}>
-                      {est?.cargando?"Analizando el seguimiento...":"Se revisa sola al registrar datos nuevos"}
-                    </div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>
+                    Enologo IA{est?.cargando&&<span style={{fontWeight:400,fontSize:11,color:C.muted}}> · analizando...</span>}
                   </div>
-                  <Btn variant="ghost" small onClick={()=>consultarEnologo(dep)}>
-                    {est?.cargando?"...":"Analizar"}
-                  </Btn>
+                  <div style={{display:"flex",gap:6}}>
+                    <Btn variant="ghost" small onClick={()=>consultarEnologo(dep)}>{est?.cargando?"...":"Analizar"}</Btn>
+                    <Btn variant="ghost" small onClick={()=>setChatAbierto(v=>!v)}>{chatAbierto?"Cerrar":"Preguntar"}</Btn>
+                  </div>
                 </div>
 
                 {est?.error&&<div style={{fontSize:12,color:C.danger,marginTop:10}}>{est.error}</div>}
@@ -1357,9 +1341,10 @@ export default function BodegaApp() {
                   </div>
                 </div>}
 
-                {/* Chat: preguntar al enologo sobre este deposito */}
+                {/* Chat: preguntar al enologo sobre este deposito (se despliega con Preguntar) */}
                 {(()=>{
                   const chat = chatEnologo[dep.id]||[];
+                  if(!chatAbierto) return null;
                   return (
                     <div style={{marginTop:12,borderTop:"1px solid "+C.border,paddingTop:10}}>
                       {chat.length>0&&<div style={{marginBottom:8,maxHeight:260,overflowY:"auto"}}>
