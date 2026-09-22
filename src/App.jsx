@@ -872,6 +872,37 @@ export default function BodegaApp() {
     };
   };
 
+  // Depositos en fermentacion activa a los que les falta la lectura de hoy (densidad y/o temperatura).
+  // En fermentacion = tiene contenido, no esta marcado como terminado, y su lote viene de una
+  // vendimia (propia o heredada por prensado) o ya tiene lecturas de fermentacion.
+  const lecturasPendientesHoy = () => {
+    const h = hoy();
+    const res = [];
+    [...depositos,...barricas].forEach(raw=>{
+      if(!raw.activo && raw.activo!==undefined) return;
+      const d = depConLote(raw);
+      if(d.fermentacionTerminada) return;
+      const litros = d.siempreLleno ? 0 : litrosActuales(d.id, h);
+      const kg = kgVendimiaDe(d.id, h);
+      if(litros<=0 && kg<=0) return;
+      const lote = histDep(d.id, h, true);
+      if(!lote.some(o=>o.tipo==="vendimia"||o.tipo==="fermentacion")) return;
+      const deHoy = lote.filter(o=>o.tipo==="fermentacion"&&o.fecha===h&&!o._heredadoDe);
+      const tieneDens = deHoy.some(o=>o.densidad!==undefined&&o.densidad!==null&&o.densidad!=="");
+      const tieneTemp = deHoy.some(o=>o.temperatura!==undefined&&o.temperatura!==null&&o.temperatura!=="");
+      if(tieneDens&&tieneTemp) return;
+      res.push({id:d.id, falta: !tieneDens&&!tieneTemp ? "densidad y temperatura" : (!tieneDens?"densidad":"temperatura")});
+    });
+    return res.sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true}));
+  };
+  const hayFermentandoHoy = () => [...depositos,...barricas].some(raw=>{
+    const d = depConLote(raw);
+    if(d.fermentacionTerminada) return false;
+    const h = hoy();
+    if(litrosActuales(d.id,h)<=0 && kgVendimiaDe(d.id,h)<=0) return false;
+    return histDep(d.id,h,true).some(o=>o.tipo==="vendimia"||o.tipo==="fermentacion");
+  });
+
   const TIPOS_HEREDABLES = ["vendimia","analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","aditivo_fermentacion","otro"];
 
   const histDep = (id, hastaFecha, soloActual, _prof=0) => {
@@ -2698,6 +2729,38 @@ export default function BodegaApp() {
               </div>}
             </div>
           </div>
+
+          {/* Recordatorio diario: lecturas de fermentacion pendientes de hoy */}
+          {fechaConsulta===hoy() && hayFermentandoHoy() && (()=>{
+            const pend = lecturasPendientesHoy();
+            if(pend.length===0) return (
+              <div style={{...S.card,marginBottom:10,padding:"8px 12px",borderColor:C.accent,fontSize:12,color:C.accent}}>
+                ✓ Lecturas de hoy completas en todos los depositos en fermentacion
+              </div>
+            );
+            return (
+              <div style={{...S.card,marginBottom:10,borderColor:C.gold,background:"rgba(200,169,110,0.08)"}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:6}}>
+                  Lecturas de hoy pendientes ({pend.length})
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {pend.map(p=>(
+                    <button key={p.id} onClick={()=>{
+                        const ahora = new Date();
+                        const hora = String(ahora.getHours()).padStart(2,"0")+":"+String(ahora.getMinutes()).padStart(2,"0");
+                        setSelId(null);
+                        setFormOp({depId:p.id, fecha:hoy(), hora, tipo:"fermentacion"});
+                        setVista("nueva_op");
+                      }}
+                      style={{padding:"5px 10px",borderRadius:16,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
+                        border:"1px solid "+C.gold,background:"transparent",color:C.text}}>
+                      <b style={{color:C.gold}}>{p.id}</b> <span style={{color:C.muted,fontSize:11}}>· falta {p.falta}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Filtros */}
           <div style={{marginBottom:10}}>
