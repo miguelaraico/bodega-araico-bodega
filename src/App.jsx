@@ -781,9 +781,19 @@ export default function BodegaApp() {
     const hasta = hastaFecha || hoy();
     const litros = litrosActuales(id, hasta);
     if(litros>0) return 0;
-    const tieneOperLlenado = operaciones.some(o=>o.depId===id&&["llenado","trasiego"].includes(o.tipo)&&o.fecha<=hasta);
-    if(tieneOperLlenado) return 0;
-    return operaciones.filter(o=>o.depId===id&&o.tipo==="vendimia"&&o.fecha<=hasta).reduce((s,o)=>s+parseFloat(o.kg||0),0);
+    // Recorrer en orden: la uva se acumula con cada vendimia y se "consume" cuando se prensa
+    // DESDE este deposito, o cuando entra vino/mosto en el (llenado, entrada, trasiego recibido).
+    let kg = 0;
+    operaciones
+      .filter(o=>(o.depId===id||o.depDestino===id||o.depDestino2===id) && o.fecha<=hasta)
+      .sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id)
+      .forEach(o=>{
+        if(o.tipo==="vendimia" && o.depId===id) kg += parseFloat(o.kg||0);
+        else if(o.tipo==="prensado" && o.depId===id) kg = 0;
+        else if(["llenado","entrada_granel"].includes(o.tipo) && o.depId===id) kg = 0;
+        else if(o.tipo==="trasiego" && (o.depDestino===id||o.depDestino2===id)) kg = 0;
+      });
+    return kg;
   };
 
   // Una entrada (vendimia/llenado/entrada_granel/trasiego) solo cuenta como INICIO de lote
@@ -814,19 +824,43 @@ export default function BodegaApp() {
     return litros<=0 && kg<=0;
   };
 
-  const histDep = (id, hastaFecha, soloActual) => {
+  // Operacion que inicio el lote actual de un deposito (vendimia, llenado, entrada o trasiego recibido)
+  const entradaLoteDe = (id, hastaFecha) => {
+    const hasta = hastaFecha || "9999-12-31";
+    return operaciones
+      .filter(o=>((o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===id&&o.tipo==="trasiego"))&&o.fecha<=hasta&&esInicioDeLote(o,id))
+      .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
+  };
+  // Si el lote actual empezo con el mosto de un prensado de OTRO deposito, devuelve ese deposito.
+  // (Compatible con llenados antiguos, que solo lo indicaban en las notas.)
+  const origenPrensadoDe = (id, hastaFecha) => {
+    const ent = entradaLoteDe(id, hastaFecha);
+    if(!ent || ent.tipo!=="llenado") return null;
+    const origen = ent.prensadoDesde || ((ent.notas||"").match(/\[Prensado desde ([^\]\s]+)\]/)||[])[1];
+    return (origen && origen!==id) ? {origen, fecha:ent.fecha} : null;
+  };
+
+  const TIPOS_HEREDABLES = ["vendimia","analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","aditivo_fermentacion","otro"];
+
+  const histDep = (id, hastaFecha, soloActual, _prof=0) => {
     const hasta = hastaFecha || "9999-12-31";
     let ops = operaciones
       .filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
       .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
 
     if(soloActual) {
-      // Encontrar la fecha de la ultima entrada (llenado, vendimia o trasiego recibido)
-      const ultimaEntrada = operaciones
-        .filter(o=>((o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===id&&o.tipo==="trasiego"))&&esInicioDeLote(o,id))
-        .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
+      const ultimaEntrada = entradaLoteDe(id, hasta);
       if(ultimaEntrada) {
-        ops = ops.filter(o=>o.fecha>=ultimaEntrada.fecha);
+        // Lo propio del lote, mas lo heredado por trasiego en este mismo lote
+        ops = ops.filter(o=>o.fecha>=ultimaEntrada.fecha || (o.heredadoEn && o.heredadoEn>=ultimaEntrada.fecha));
+      }
+      // Trazabilidad del prensado: incluir el historial del lote de origen (sin copiarlo)
+      const org = _prof<3 ? origenPrensadoDe(id, hasta) : null;
+      if(org) {
+        const heredadas = histDep(org.origen, org.fecha, true, _prof+1)
+          .filter(o=>o.depId===org.origen && TIPOS_HEREDABLES.includes(o.tipo) && !ops.some(p=>p.id===o.id))
+          .map(o=>({...o, _heredadoDe:org.origen}));
+        ops = [...ops, ...heredadas].sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
       }
     }
     return ops;
@@ -1129,8 +1163,21 @@ export default function BodegaApp() {
 
   // ── VISTA FICHA CONTENEDOR ─────────────────────────────────────────────────
   if(vista==="ficha") {
-    const dep = todosContenedores.find(d=>d.id===selId);
-    if(!dep){setVista("lista");return null;}
+    const depGuardado = todosContenedores.find(d=>d.id===selId);
+    if(!depGuardado){setVista("lista");return null;}
+    // Si el lote viene de un prensado y a este deposito le faltan datos del vino
+    // (prensados hechos antes de que se traspasaran automaticamente), tomarlos del origen.
+    const orgPrensado = origenPrensadoDe(depGuardado.id, fechaConsulta);
+    const depOrg = orgPrensado ? todosContenedores.find(d=>d.id===orgPrensado.origen) : null;
+    const dep = depOrg ? {...depGuardado,
+      tipoVino: depGuardado.tipoVino||depOrg.tipoVino||"",
+      anada:    depGuardado.anada||depOrg.anada||"",
+      etiqueta: depGuardado.etiqueta||depOrg.etiqueta||"",
+      curvaInicial:  depGuardado.curvaInicial||depOrg.curvaInicial||"",
+      curvaObjetivo: depGuardado.curvaObjetivo||depOrg.curvaObjetivo||"",
+      curvaDias:     depGuardado.curvaDias||depOrg.curvaDias||"",
+      protocoloOmitidos: (depGuardado.protocoloOmitidos&&depGuardado.protocoloOmitidos.length)?depGuardado.protocoloOmitidos:(depOrg.protocoloOmitidos||[]),
+    } : depGuardado;
     const esBarrica = barricas.some(b=>b.id===dep.id);
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
     const pct = dep.capacidad>0?Math.round((litros/dep.capacidad)*100):0;
@@ -1311,10 +1358,10 @@ export default function BodegaApp() {
             const opsProductos = histLoteActual.filter(o=>["aditivo_fermentacion","sulfitado","clarificacion","filtracion","acidez","azucar"].includes(o.tipo)).sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
 
             // Dia 0 = fecha de entrada del lote actual (vendimia/llenado/entrada_granel/trasiego recibido)
-            const entradaLote = operaciones
-              .filter(o=>((o.depId===dep.id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))||(o.depDestino===dep.id&&o.tipo==="trasiego"))&&o.fecha<=fechaConsulta&&esInicioDeLote(o,dep.id))
-              .sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];
-            const fechaInicio = entradaLote?.fecha || (opsFermentacion[0]?.fecha) || null;
+            const entradaLote = entradaLoteDe(dep.id, fechaConsulta);
+            // Dia 0 = lo mas antiguo del lote (incluida la vendimia de origen si viene de un prensado)
+            const fechasLote = histLoteActual.map(o=>o.fecha).filter(Boolean).sort();
+            const fechaInicio = fechasLote[0] || entradaLote?.fecha || (opsFermentacion[0]?.fecha) || null;
             const diaDe = (fecha, hora) => {
               if(!fechaInicio) return 0;
               const t = new Date(fecha+"T"+(hora||"12:00")+":00").getTime();
@@ -1626,7 +1673,7 @@ export default function BodegaApp() {
               <div key={op.id} onClick={()=>setSelOp(op)}
                 style={{...S.card,borderLeft:"3px solid "+col,marginBottom:6,padding:"10px 12px",cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                  <span style={{fontSize:12,fontWeight:700,color:col}}>{t?.label||op.tipo}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:col}}>{t?.label||op.tipo}{op._heredadoDe&&<span style={{fontWeight:400,color:C.muted,fontSize:11}}> · de {op._heredadoDe}</span>}</span>
                   <span style={{fontSize:11,color:C.muted}}>{fmtF(op.fecha)}</span>
                 </div>
                 {op.tipo==="fermentacion"&&<div style={{display:"flex",gap:16,marginTop:4}}>
@@ -1691,6 +1738,20 @@ export default function BodegaApp() {
                 </div>
                 {selOp.litros&&<div style={S.row}><span style={{color:C.muted}}>Litros</span><span style={{fontWeight:700}}>{fmtL(selOp.litros)}</span></div>}
                 {selOp.kg&&<div style={S.row}><span style={{color:C.muted}}>Kg uva</span><span>{selOp.kg} Kg</span></div>}
+                {selOp.tipo==="prensado"&&<div style={{...S.row,alignItems:"center"}}>
+                  <span style={{color:C.muted}}>Orujo</span>
+                  <span style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontWeight:700,color:selOp.orujoKg?C.text:C.muted}}>{selOp.orujoKg?fmtK(selOp.orujoKg)+" kg":"sin indicar"}</span>
+                    <Btn variant="ghost" small onClick={()=>{
+                      const v = window.prompt("Kg de orujo de este prensado:", selOp.orujoKg||"");
+                      if(v===null) return;
+                      const n = parseFloat(String(v).replace(",","."));
+                      const nuevo = (v.trim()===""||isNaN(n)) ? "" : String(n);
+                      setOperaciones(prev=>prev.map(o=>o.id===selOp.id?{...o,orujoKg:nuevo}:o));
+                      setSelOp(s=>({...s,orujoKg:nuevo}));
+                    }}>{selOp.orujoKg?"Cambiar":"Añadir"}</Btn>
+                  </span>
+                </div>}
                 {selOp.variedad&&<div style={S.row}><span style={{color:C.muted}}>Variedad</span><span>{selOp.variedad}</span></div>}
                 {selOp.campana&&<div style={S.row}><span style={{color:C.muted}}>Campana</span><span>{selOp.campana}</span></div>}
                 {selOp.grado&&<div style={S.row}><span style={{color:C.muted}}>Grado</span><span>{selOp.grado} %vol</span></div>}
@@ -1808,10 +1869,33 @@ export default function BodegaApp() {
           tipoVinoOrigen: f.tipoVino||depOrigen?.tipoVino||"",
           anadaOrigen: f.anada||depOrigen?.anada||"",
           etiquetaOrigen: f.etiqueta||depOrigen?.etiqueta||"",
+          prensadoDesde: f.depId||"",
+          orujoKg: undefined,   // el orujo pertenece al prensado, no al llenado (evita contarlo dos veces)
           notas: (f.notas||"")+" [Prensado desde "+(f.depId||"prensa")+"]",
         };
         setOperaciones(prev=>[opLlenado,...prev]);
-        // El orujo ya no se acumula aqui: se calcula siempre desde las operaciones de prensado
+        // El orujo no se acumula aqui: se calcula siempre desde las operaciones de prensado
+
+        // El vino sigue siendo el mismo lote: el destino hereda su identidad y seguimiento
+        if(depOrigen && f.depDestino!==f.depId) {
+          setDepositos(prev=>prev.map(d=>{
+            if(d.id===f.depDestino) return {...d,
+              tipoVino: depOrigen.tipoVino||d.tipoVino||"",
+              anada:    depOrigen.anada||d.anada||"",
+              etiqueta: depOrigen.etiqueta||d.etiqueta||"",
+              curvaInicial:  depOrigen.curvaInicial||d.curvaInicial||"",
+              curvaObjetivo: depOrigen.curvaObjetivo||d.curvaObjetivo||"",
+              curvaDias:     depOrigen.curvaDias||d.curvaDias||"",
+              protocoloOmitidos: [...(depOrigen.protocoloOmitidos||[])],
+              fermentacionTerminada: !!depOrigen.fermentacionTerminada,
+            };
+            // El deposito de origen queda vacio (la uva ya se ha prensado)
+            if(d.id===f.depId && !d.siempreLleno) return {...d,
+              tipoVino:"",anada:"",etiqueta:"",curvaInicial:"",curvaObjetivo:"",curvaDias:"",
+              protocoloOmitidos:[],fermentacionTerminada:false};
+            return d;
+          }));
+        }
       }
 
       // Calcular litros ANTES de añadir la operacion
@@ -1841,7 +1925,7 @@ export default function BodegaApp() {
       const dosisRealFinal = dosisRealCalculada ? {dosisReal:dosisRealCalculada} : null;
 
       if(f._editandoId) {
-        const {_editandoId, ...opSinId} = f;
+        const {_editandoId, _heredadoDe, ...opSinId} = f;
         setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId,...(productoFinal||{}),...(dosisRealFinal||{})}:o));
       } else {
         const ops = [{...f, id:Date.now(), 
@@ -1874,7 +1958,7 @@ export default function BodegaApp() {
           const tiposACopiar = ["analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","aditivo_fermentacion","otro"];
           const opsOrigen = operaciones
             .filter(o=>o.depId===f.depId && o.fecha<=f.fecha && tiposACopiar.includes(o.tipo))
-            .map(o=>({...o, id:Date.now()+Math.random(), depId:depId,
+            .map(o=>({...o, id:Date.now()+Math.random(), depId:depId, heredadoEn:f.fecha,
               notas:(o.notas?o.notas+" | ":"")+"[Heredado de "+f.depId+"]"}));
           if(opsOrigen.length>0) {
             setOperaciones(prev=>[...opsOrigen,...prev]);
@@ -2008,7 +2092,7 @@ export default function BodegaApp() {
                 Capacidad disponible en {dep.nombre}: {fmtL(disp)}
               </div> : null;
             })()}
-            <label style={S.label}>Kg de orujo generados</label>
+            <label style={S.label}>Kg de orujo generados (opcional: se puede añadir despues)</label>
             <input type="number" style={S.input} placeholder="0" value={f.orujoKg||""} onChange={e=>set("orujoKg",e.target.value)}/>
             {f.orujoKg&&<div style={{fontSize:12,color:C.gold,marginTop:-6,marginBottom:8}}>
               Total orujo acumulado: {fmtK(orujos + (f._editandoId?0:parseFloat(f.orujoKg||0)))} kg
@@ -2572,10 +2656,7 @@ export default function BodegaApp() {
               const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fechaConsulta);
               const infoEtiqueta = etiquetaActual(dep.id);
               // Calcular kg de vendimia sin prensar (solo si no hay litros Y solo hay vendimias, no llenados)
-              const tieneOperLlenado = operaciones.some(o=>o.depId===dep.id&&["llenado","trasiego"].includes(o.tipo)&&o.fecha<=fechaConsulta);
-              const kgVendimia = litros===0 && !tieneOperLlenado ? operaciones
-                .filter(o=>o.depId===dep.id&&o.tipo==="vendimia"&&o.fecha<=fechaConsulta)
-                .reduce((s,o)=>s+parseFloat(o.kg||0),0) : 0;
+              const kgVendimia = kgVendimiaDe(dep.id, fechaConsulta);
               // etiquetaActual() devuelve vacio cuando el deposito no tiene LITROS (p.ej. uva sin
               // prensar). En ese caso no debe machacar el tipo/etiqueta guardados en el deposito,
               // o el tanque se pintaria gris pese a tener uva dentro.
