@@ -522,6 +522,7 @@ export default function BodegaApp() {
   const [preguntaChat, setPreguntaChat] = useState("");
   const [chatCargando, setChatCargando] = useState(false);
   const [chatAbierto, setChatAbierto] = useState(false);
+  const [verPendientes, setVerPendientes] = useState(false);
   const [ventas,       setVentas]       = useState([]);
   const [orujosAjuste,  setOrujosAjuste]  = useState(0); // correccion manual, se suma a lo calculado desde las operaciones de prensado
   const [materiales,   setMateriales]   = useState({
@@ -1621,6 +1622,22 @@ export default function BodegaApp() {
                   <Btn variant="ghost" small onClick={()=>marcarTerminada(true)}>Marcar como terminada</Btn>
                 </div>
                 <div style={{height:8}}/>
+                {fechaConsulta===hoy() && (()=>{
+                  const falta = lecturasPendientesHoy().find(p=>p.id===dep.id);
+                  if(!falta) return null;
+                  return (
+                    <div style={{...S.card,marginBottom:10,padding:"7px 12px",borderColor:C.gold,
+                      display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span style={{fontSize:12.5,color:C.gold}}>⚠ Falta la lectura de hoy ({falta.falta})</span>
+                      <Btn variant="gold" small onClick={()=>{
+                        const ahora = new Date();
+                        const hora = String(ahora.getHours()).padStart(2,"0")+":"+String(ahora.getMinutes()).padStart(2,"0");
+                        setFormOp({depId:dep.id, fecha:hoy(), hora, tipo:"fermentacion"});
+                        setVista("nueva_op");
+                      }}>Registrar</Btn>
+                    </div>
+                  );
+                })()}
 
 
                 {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
@@ -2661,6 +2678,13 @@ export default function BodegaApp() {
   // ── TAB DEPOSITOS ──────────────────────────────────────────────────────────
   if(tab==="depositos") {
     const deps = depositos.filter(d=>d.activo);
+    // Pendientes de hoy (lecturas y productos de protocolo), calculados una vez para la linea y los tanques
+    const esHoy = fechaConsulta===hoy();
+    const pendLect = esHoy ? lecturasPendientesHoy() : [];
+    const pendProd = esHoy ? [...depositos,...barricas].map(d=>({id:d.id, pp:protocoloPendienteDe(d, hoy())}))
+        .filter(x=>x.pp.pasos.length>0).sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true})) : [];
+    const nPendDe = id => (pendLect.some(p=>p.id===id)?1:0) + (pendProd.find(x=>x.id===id)?.pp.pasos.length||0);
+    const nProdTotal = pendProd.reduce((s,x)=>s+x.pp.pasos.length,0);
     const esModoHistorico = fechaConsulta !== hoy();
     const totalL   = deps.reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta)),0);
     const totalCap = deps.reduce((s,d)=>s+d.capacidad,0);
@@ -2786,21 +2810,27 @@ export default function BodegaApp() {
             </div>
           </div>
 
-          {/* Recordatorio diario: lecturas y productos de protocolo pendientes de hoy */}
-          {fechaConsulta===hoy() && hayFermentandoHoy() && (()=>{
-            const pend = lecturasPendientesHoy();
-            const prods = [...depositos,...barricas]
-              .map(d=>({id:d.id, pp:protocoloPendienteDe(d, hoy())}))
-              .filter(x=>x.pp.pasos.length>0)
-              .sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true}));
+          {/* Recordatorio diario: una linea plegable (el detalle se despliega al tocarla) */}
+          {esHoy && hayFermentandoHoy() && (()=>{
+            const pend = pendLect;
+            const prods = pendProd;
             if(pend.length===0 && prods.length===0) return (
-              <div style={{...S.card,marginBottom:10,padding:"8px 12px",borderColor:C.accent,fontSize:12,color:C.accent}}>
-                ✓ Hoy esta todo al dia: lecturas tomadas y sin productos pendientes
+              <div style={{fontSize:11,color:C.accent,margin:"0 0 8px 2px"}}>✓ Hoy todo al dia</div>
+            );
+            const resumen = [pend.length?pend.length+(pend.length===1?" lectura":" lecturas"):null,
+                             nProdTotal?nProdTotal+(nProdTotal===1?" producto":" productos"):null].filter(Boolean).join(" · ");
+            if(!verPendientes) return (
+              <div onClick={()=>setVerPendientes(true)}
+                style={{...S.card,marginBottom:10,padding:"7px 12px",borderColor:C.gold,cursor:"pointer",
+                  display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:12.5,color:C.gold}}>⚠ Pendiente hoy: <b>{resumen}</b></span>
+                <span style={{fontSize:11,color:C.muted}}>ver ▸</span>
               </div>
             );
             const boton = {padding:"4px 9px",borderRadius:14,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,background:"transparent"};
             return (
               <div style={{...S.card,marginBottom:10,borderColor:C.gold,background:"rgba(200,169,110,0.08)"}}>
+                <div onClick={()=>setVerPendientes(false)} style={{textAlign:"right",fontSize:11,color:C.muted,cursor:"pointer",marginBottom:4}}>ocultar ▴</div>
                 {pend.length>0&&<>
                   <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:6}}>Lecturas de hoy pendientes ({pend.length})</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:prods.length?12:0}}>
@@ -2895,6 +2925,12 @@ export default function BodegaApp() {
                 <div key={dep.id} style={{position:"relative"}}>
                   <Tanque dep={depConEtiqueta} litros={litros} resaltado={resaltado}
                     onClick={()=>{setSelId(dep.id);setVista("ficha");}}/>
+                  {nPendDe(dep.id)>0&&<div title="Pendiente hoy"
+                    style={{position:"absolute",top:-2,left:6,minWidth:16,height:16,borderRadius:8,padding:"0 4px",
+                      background:C.gold,color:"#0F1923",fontSize:10,fontWeight:700,
+                      display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                    {nPendDe(dep.id)}
+                  </div>}
                   {(()=>{
                     const av = avisosEnologo[dep.id]?.avisos;
                     if(!av||av.length===0) return null;
