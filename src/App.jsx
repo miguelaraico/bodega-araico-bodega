@@ -889,6 +889,96 @@ export default function BodegaApp() {
     return histDep(d.id,h,true).some(o=>o.tipo==="vendimia"||o.tipo==="fermentacion");
   });
 
+  // ── Protocolo pendiente de un deposito (compartido por la ficha y el recordatorio diario) ──
+  const actualizarContenedor = (id, fn) => {
+    if(barricas.some(b=>b.id===id)) setBarricas(prev=>prev.map(b=>b.id===id?fn(b):b));
+    else setDepositos(prev=>prev.map(d=>d.id===id?fn(d):d));
+  };
+  // "No lo añado": se descarta para este lote
+  const omitirPasoDe = (id, stepId) => {
+    const base = depConLote([...depositos,...barricas].find(x=>x.id===id))?.protocoloOmitidos || [];
+    actualizarContenedor(id, d=>({...d, protocoloOmitidos:[...new Set([...base, stepId])]}));
+  };
+  // "Mas adelante": se aparta hoy y vuelve a aparecer mañana, hasta que se decida
+  const aplazarPasoDe = (id, stepId) =>
+    actualizarContenedor(id, d=>({...d, protocoloAplazados:{...(d.protocoloAplazados||{}), [stepId]:hoy()}}));
+
+  const protocoloPendienteDe = (raw, fecha) => {
+    const vacio = {pasos:[], ultimaVendimia:null};
+    if(!raw) return vacio;
+    const dep = depConLote(raw);
+    if(dep.fermentacionTerminada) return vacio;
+    const lote = histDep(dep.id, fecha, true);
+    // Solo lotes en fermentacion: vienen de vendimia (propia o por prensado) o tienen lecturas.
+    // Asi no se aplica el protocolo a vinos ya hechos entrados a granel (p.ej. un crianza).
+    if(!lote.some(o=>o.tipo==="vendimia"||o.tipo==="fermentacion")) return vacio;
+    const fechasLote = lote.map(o=>o.fecha).filter(Boolean).sort();
+    const fIni = fechasLote[0];
+    const dias = fIni ? (new Date(fecha+"T00:00:00")-new Date(fIni+"T00:00:00"))/86400000 : Infinity;
+    if(dias>45) return vacio;
+    const proto = protocolos[dep.tipoVino||""] || [];
+    if(proto.length===0) return vacio;
+    const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fecha);
+    const kg = kgVendimiaDe(dep.id, fecha);
+    // Densidad actual = ultima lectura QUE TENGA densidad (aunque la ultima solo tuviera temperatura)
+    const conDens = lote.filter(o=>o.tipo==="fermentacion"&&o.densidad!==undefined&&o.densidad!==null&&o.densidad!=="")
+                        .sort((a,b)=>a.fecha.localeCompare(b.fecha)||(a.hora||"").localeCompare(b.hora||"")||a.id-b.id);
+    const cIni = dep.curvaInicial ? densOk(dep.curvaInicial) : null;
+    const densActual = conDens.length ? densOk(conDens[conDens.length-1].densidad) : cIni;
+    const omitidos = dep.protocoloOmitidos || [];
+    const aplazados = dep.protocoloAplazados || {};
+    const ultimaVendimia = lote.filter(o=>o.tipo==="vendimia").sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0] || null;
+    // Productos añadidos a mano (+ Producto) sin enlazar a un paso: se reconocen por nombre.
+    // "Metabisulfito..." cubre "Meta"; si un producto va en varias tandas, cada registro cubre una
+    // tanda por orden; si solo hay un paso con ese producto, todos sus registros son de ese paso.
+    const base = s => normProducto(String(s||"").replace(/\([^)]*\)/g,""));
+    const coincide = (a,b) => a && b && a.length>=3 && b.length>=3 && (a.startsWith(b)||b.startsWith(a));
+    const idsProto = new Set(proto.map(s=>s.id));
+    const manuales = lote.filter(o=>["aditivo_fermentacion","sulfitado","acidez","clarificacion","azucar"].includes(o.tipo)
+        && !(o.protocoloStepId && idsProto.has(o.protocoloStepId)))
+      .sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.id-b.id);
+    const asignados = {};  // step.id -> [ops]
+    const usados = new Set();
+    proto.forEach(step=>{
+      const b = base(step.producto);
+      const hermanos = proto.filter(s=>coincide(base(s.producto), b) && base(s.producto)===b);
+      const candidatos = manuales.filter(o=>!usados.has(o.id) && coincide(base(o.producto), b));
+      if(candidatos.length===0) return;
+      const toma = hermanos.length<=1 ? candidatos : [candidatos[0]];
+      toma.forEach(o=>usados.add(o.id));
+      asignados[step.id] = toma;
+    });
+
+    const pasos = [];
+    proto.forEach(step=>{
+      if(omitidos.includes(step.id)) return;
+      if(aplazados[step.id] && aplazados[step.id]>=fecha) return;
+      const hechos = [...lote.filter(o=>o.protocoloStepId===step.id), ...(asignados[step.id]||[])];
+      let porUvaNueva = false;
+      if(hechos.length>0) {
+        if(step.momento==="inicio" && ultimaVendimia) {
+          const ult = hechos.sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
+          porUvaNueva = ultimaVendimia.fecha>ult.fecha || (ultimaVendimia.fecha===ult.fecha && ultimaVendimia.id>ult.id);
+          if(!porUvaNueva) return;
+        } else return;
+      }
+      if(step.momento==="densidad" && !(densActual!=null && !isNaN(densActual) && densActual<=step.densidadMax)) return;
+      if(step.momento!=="inicio" && step.momento!=="densidad") return;
+      const kgBase = porUvaNueva && ultimaVendimia ? parseFloat(ultimaVendimia.kg||0) : kg;
+      const cantidad = calcularCantidad(step.dosis, porUvaNueva?0:litros, kgBase);
+      pasos.push({step, porUvaNueva, cantidad});
+    });
+    return {pasos, ultimaVendimia};
+  };
+  // "Ya lo eche": abre el formulario de producto con todo relleno
+  const confirmarPasoDe = (id, paso) => {
+    setFormOp({depId:id, fecha:hoy(), tipo:"aditivo_fermentacion",
+      producto:"Otro", productoOtro:paso.step.producto, dosisTeorica:paso.step.dosis,
+      ...(paso.cantidad?{cantidadReal:String(paso.cantidad.cantidad.toFixed(2)),unidadReal:paso.cantidad.unidad}:{}),
+      protocoloStepId:paso.step.id});
+    setVista("nueva_op");
+  };
+
   const TIPOS_HEREDABLES = ["vendimia","analisis","sulfitado","clarificacion","filtracion","acidez","azucar","temperatura","fermentacion","aditivo_fermentacion","otro"];
 
   const histDep = (id, hastaFecha, soloActual, _prof=0) => {
@@ -1497,27 +1587,9 @@ export default function BodegaApp() {
               .filter(o=>o.tipo==="vendimia")
               .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
 
-            const pasosPendientes = protocoloActivo.filter(step=>{
-              if(omitidos.includes(step.id)) return false;
-              if(recordatoriosOcultos.includes(step.id)) return false;
-              const hechos = histLoteActual.filter(o=>o.protocoloStepId===step.id);
-              if(hechos.length>0) {
-                // Para pasos de inicio: si hay una vendimia posterior al ultimo aporte, volver a avisar
-                if(step.momento==="inicio" && ultimaVendimia) {
-                  const ultimoAporte = hechos.sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
-                  const hayUvaNueva = ultimaVendimia.fecha>ultimoAporte.fecha ||
-                    (ultimaVendimia.fecha===ultimoAporte.fecha && ultimaVendimia.id>ultimoAporte.id);
-                  if(!hayUvaNueva) return false;
-                } else return false;
-              }
-              if(step.momento==="inicio") return true;
-              if(step.momento==="densidad") return currentDensidad!=null && currentDensidad<=step.densidadMax;
-              return false;
-            });
-            const omitirPaso = stepId => {
-              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,protocoloOmitidos:[...(b.protocoloOmitidos||[]),stepId]}:b));
-              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,protocoloOmitidos:[...(d.protocoloOmitidos||[]),stepId]}:d));
-            };
+            const ppFicha = protocoloPendienteDe(depGuardado, fechaConsulta);
+            const pasosPendientes = ppFicha.pasos.map(p=>p.step);
+            const omitirPaso = stepId => omitirPasoDe(dep.id, stepId);
             const confirmarPaso = step => {
               // Si el paso ya se hizo antes y se pide de nuevo por haber entrado uva nueva,
               // la dosis se calcula SOLO sobre los kg de esa vendimia nueva, no sobre el total.
@@ -1552,11 +1624,10 @@ export default function BodegaApp() {
 
 
                 {pasosPendientes.length>0&&<div style={{marginBottom:12}}>
-                  {pasosPendientes.map(step=>{
-                    const yaHecho = histLoteActual.some(o=>o.protocoloStepId===step.id);
-                    const kgBase = (yaHecho && step.momento==="inicio" && ultimaVendimia)
-                      ? parseFloat(ultimaVendimia.kg||0) : kgVendimia;
-                    const c = calcularCantidad(step.dosis, yaHecho?0:litros, kgBase);
+                  {ppFicha.pasos.map(paso=>{
+                    const step = paso.step;
+                    const yaHecho = paso.porUvaNueva;
+                    const c = paso.cantidad;
                     return (
                     <div key={step.id} style={{...S.card,borderColor:C.gold,background:"rgba(200,169,110,0.08)",marginBottom:6,padding:"10px 12px"}}>
                       <div style={{fontSize:13,fontWeight:700,color:C.gold}}>
@@ -1568,9 +1639,9 @@ export default function BodegaApp() {
                         {c?<span style={{color:C.gold,fontWeight:700}}> · Total: {fmtCantidad(c)}</span>:null}
                       </div>
                       <div style={{display:"flex",gap:6}}>
-                        <Btn variant="gold" small onClick={()=>confirmarPaso(step)}>Ya lo eché</Btn>
+                        <Btn variant="gold" small onClick={()=>confirmarPasoDe(dep.id, paso)}>Ya lo eché</Btn>
                         <Btn variant="ghost" small onClick={()=>omitirPaso(step.id)}>No lo añado</Btn>
-                        <Btn variant="ghost" small onClick={()=>setRecordatoriosOcultos(prev=>[...prev,step.id])}>Esperar</Btn>
+                        <Btn variant="ghost" small onClick={()=>aplazarPasoDe(dep.id, step.id)}>Mas adelante</Btn>
                       </div>
                     </div>
                   );})}
@@ -2715,34 +2786,68 @@ export default function BodegaApp() {
             </div>
           </div>
 
-          {/* Recordatorio diario: lecturas de fermentacion pendientes de hoy */}
+          {/* Recordatorio diario: lecturas y productos de protocolo pendientes de hoy */}
           {fechaConsulta===hoy() && hayFermentandoHoy() && (()=>{
             const pend = lecturasPendientesHoy();
-            if(pend.length===0) return (
+            const prods = [...depositos,...barricas]
+              .map(d=>({id:d.id, pp:protocoloPendienteDe(d, hoy())}))
+              .filter(x=>x.pp.pasos.length>0)
+              .sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true}));
+            if(pend.length===0 && prods.length===0) return (
               <div style={{...S.card,marginBottom:10,padding:"8px 12px",borderColor:C.accent,fontSize:12,color:C.accent}}>
-                ✓ Lecturas de hoy completas en todos los depositos en fermentacion
+                ✓ Hoy esta todo al dia: lecturas tomadas y sin productos pendientes
               </div>
             );
+            const boton = {padding:"4px 9px",borderRadius:14,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:11,background:"transparent"};
             return (
               <div style={{...S.card,marginBottom:10,borderColor:C.gold,background:"rgba(200,169,110,0.08)"}}>
-                <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:6}}>
-                  Lecturas de hoy pendientes ({pend.length})
-                </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {pend.map(p=>(
-                    <button key={p.id} onClick={()=>{
-                        const ahora = new Date();
-                        const hora = String(ahora.getHours()).padStart(2,"0")+":"+String(ahora.getMinutes()).padStart(2,"0");
-                        setSelId(null);
-                        setFormOp({depId:p.id, fecha:hoy(), hora, tipo:"fermentacion"});
-                        setVista("nueva_op");
-                      }}
-                      style={{padding:"5px 10px",borderRadius:16,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
-                        border:"1px solid "+C.gold,background:"transparent",color:C.text}}>
-                      <b style={{color:C.gold}}>{p.id}</b> <span style={{color:C.muted,fontSize:11}}>· falta {p.falta}</span>
-                    </button>
-                  ))}
-                </div>
+                {pend.length>0&&<>
+                  <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:6}}>Lecturas de hoy pendientes ({pend.length})</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:prods.length?12:0}}>
+                    {pend.map(p=>(
+                      <button key={p.id} onClick={()=>{
+                          const ahora = new Date();
+                          const hora = String(ahora.getHours()).padStart(2,"0")+":"+String(ahora.getMinutes()).padStart(2,"0");
+                          setSelId(null);
+                          setFormOp({depId:p.id, fecha:hoy(), hora, tipo:"fermentacion"});
+                          setVista("nueva_op");
+                        }}
+                        style={{...boton,fontSize:12,padding:"5px 10px",border:"1px solid "+C.gold,color:C.text}}>
+                        <b style={{color:C.gold}}>{p.id}</b> <span style={{color:C.muted,fontSize:11}}>· falta {p.falta}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>}
+                {prods.length>0&&<>
+                  <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:6}}>
+                    Productos por añadir segun protocolo ({prods.reduce((s,x)=>s+x.pp.pasos.length,0)})
+                  </div>
+                  {prods.map(({id,pp})=>(<div key={id} style={{borderTop:"1px solid "+C.border,paddingTop:6,marginTop:4}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <b style={{color:C.gold,fontSize:13}}>{id}</b>
+                      {pp.pasos.length>1&&<button onClick={()=>{
+                          if(!window.confirm("Descartar los "+pp.pasos.length+" productos pendientes de "+id+" para este lote?\n\nUsalo si ya los echaste y no quedaron registrados, o si no los vas a añadir.")) return;
+                          pp.pasos.forEach(p=>omitirPasoDe(id,p.step.id));
+                        }} style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",textDecoration:"underline"}}>Descartar todos</button>}
+                    </div>
+                    {pp.pasos.map(p=>(
+                    <div key={id+p.step.id} style={{padding:"6px 0 6px 8px"}}>
+                      <div style={{fontSize:12.5,color:C.text}}>
+                        {p.step.producto}
+                        {p.porUvaNueva&&<span style={{color:C.accent,fontSize:11}}> · por uva nueva</span>}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted,marginBottom:5}}>
+                        {p.step.dosis} · {textoMomento(p.step)}
+                        {p.cantidad&&<span style={{color:C.gold,fontWeight:700}}> · Total: {fmtCantidad(p.cantidad)}</span>}
+                      </div>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>{setSelId(null);confirmarPasoDe(id,p);}} style={{...boton,border:"1px solid "+C.gold,color:C.gold,fontWeight:700}}>Ya lo eché</button>
+                        <button onClick={()=>omitirPasoDe(id,p.step.id)} style={{...boton,border:"1px solid "+C.border,color:C.muted}}>No lo añado</button>
+                        <button onClick={()=>aplazarPasoDe(id,p.step.id)} style={{...boton,border:"1px solid "+C.border,color:C.muted}}>Mas adelante</button>
+                      </div>
+                    </div>
+                  ))}</div>))}
+                </>}
               </div>
             );
           })()}
