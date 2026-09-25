@@ -147,6 +147,12 @@ const hoy  = () => new Date().toISOString().split("T")[0];
 const fmtF = d => { if(!d) return "-"; const [y,m,dd]=d.split("-"); return dd+"/"+m+"/"+y; };
 const hexToRgb = hex => { const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16); return r+","+g+","+b; };
 
+// Identificador unico para cada operacion. Date.now() puede repetirse si se crean
+// dos operaciones en el mismo milisegundo (por ejemplo el prensado y su llenado),
+// y dos operaciones con el mismo id se pisan al editar y se borran juntas.
+let _ultimoIdOp = 0;
+const nuevoIdOp = () => { const t = Date.now(); _ultimoIdOp = t > _ultimoIdOp ? t : _ultimoIdOp + 1; return _ultimoIdOp; };
+
 const DEPOSITOS_DEFAULT = [
   {id:"D1", nombre:"D1",  tipo:"inox", capacidad:30000, siempreLleno:false, activo:true, tipoVino:"",      anada:"",     etiqueta:""},
   {id:"D2", nombre:"D2",  tipo:"inox", capacidad:30000, siempreLleno:false, activo:true, tipoVino:"",      anada:"",     etiqueta:""},
@@ -619,11 +625,15 @@ export default function BodegaApp() {
   // Derivarlo de las operaciones evita descuadres al borrar o editar un prensado.
   const orujos = operaciones.reduce((s,o)=>s+(o.tipo==="prensado"?parseFloat(o.orujoKg||0):0),0) + (orujosAjuste||0);
 
-  const litrosActuales = (id, hastaFecha) => {
+  // Balance sin recortar: si sale negativo es que faltan entradas (una operacion que
+  // no se llego a guardar). litrosActuales lo recorta a 0 para no mostrar negativos,
+  // asi que ese recorte es justo lo que puede ocultar el problema: revisarDatos() lo usa
+  // para detectarlo y avisar en pantalla en vez de dejar el deposito vacio en silencio.
+  const balanceCrudo = (id, hastaFecha) => {
     const contenedor = [...depositos,...barricas].find(d=>d.id===id);
     let l = parseFloat(contenedor?.litrosIniciales||0);
     const hasta = hastaFecha || "9999-12-31";
-    operaciones.filter(o=>(o.depId===id||o.depDestino===id) && o.fecha<=hasta)
+    operaciones.filter(o=>(o.depId===id||o.depDestino===id||o.depDestino2===id) && o.fecha<=hasta)
       .sort((a,b)=>a.fecha.localeCompare(b.fecha))
       .forEach(op=>{
         if(["llenado","entrada_granel"].includes(op.tipo)&&op.depId===id) {
@@ -642,7 +652,38 @@ export default function BodegaApp() {
           l -= litrosEnvase + parseFloat(op.merma||0);
         }
       });
-    return Math.max(0,l);
+    return l;
+  };
+
+  const litrosActuales = (id, hastaFecha) => Math.max(0, balanceCrudo(id, hastaFecha));
+
+  // Revision de integridad: busca lo que puede vaciar un deposito sin que se note.
+  // 1) Depositos en negativo: han salido mas litros de los que consta que entraron.
+  // 2) Prensados cuyo deposito de destino no tiene la entrada de vino correspondiente.
+  // 3) Operaciones repetidas con el mismo identificador.
+  const revisarDatos = () => {
+    const problemas = [];
+    [...depositos,...barricas].forEach(d=>{
+      if(d.siempreLleno) return;
+      const b = balanceCrudo(d.id);
+      if(b < -0.5) problemas.push({
+        dep: d.id,
+        texto: d.nombre+": faltan "+fmt(Math.abs(Math.round(b)))+" L de entrada (han salido mas litros de los que consta que entraron)",
+      });
+    });
+    operaciones.filter(o=>o.tipo==="prensado"&&o.depDestino&&parseFloat(o.litros||0)>0).forEach(p=>{
+      const tieneLlenado = operaciones.some(o=>o.tipo==="llenado"&&o.depId===p.depDestino
+        && parseFloat(o.litros||0)===parseFloat(p.litros||0) && o.fecha>=p.fecha);
+      if(!tieneLlenado) problemas.push({
+        dep: p.depDestino,
+        texto: "Prensado "+p.depId+" → "+p.depDestino+" del "+fmtF(p.fecha)+": falta la entrada de "+fmt(p.litros)+" L en "+p.depDestino,
+      });
+    });
+    const vistos = new Set(), dup = new Set();
+    operaciones.forEach(o=>{ if(vistos.has(o.id)) dup.add(o.id); else vistos.add(o.id); });
+    if(dup.size>0) problemas.push({dep:null, texto:dup.size+(dup.size===1?" operacion repetida":" operaciones repetidas")+" (mismo identificador guardado dos veces)"});
+    // Un mismo fallo puede detectarse dos veces (por ejemplo si la operacion esta repetida)
+    return problemas.filter((p,i,a)=>a.findIndex(q=>q.texto===p.texto)===i);
   };
 
   // Calcula la etiqueta actual de un deposito desde sus operaciones
@@ -2037,12 +2078,16 @@ export default function BodegaApp() {
           etiqueta: etiqProvisional,
         }:d));
       }
+      // Llenado del deposito destino de un prensado. Se prepara aqui pero se guarda
+      // JUNTO con el prensado en una sola actualizacion (mas abajo): si se guardaran
+      // por separado, un fallo entre las dos dejaria el destino sin su entrada de vino
+      // y el deposito apareceria vacio.
+      let opLlenadoPrensado = null;
       if(!f._editandoId && f.tipo==="prensado"&&f.depDestino&&f.litros) {
         const depOrigen = depositos.find(d=>d.id===f.depId);
         // Crear operacion de llenado en el deposito destino
         const opLlenado = {
           ...f,
-          id: Date.now()+1,
           tipo: "llenado",
           depId: f.depDestino,
           tipoVinoOrigen: f.tipoVino||depOrigen?.tipoVino||"",
@@ -2053,7 +2098,7 @@ export default function BodegaApp() {
           orujoKg: undefined,   // el orujo pertenece al prensado, no al llenado (evita contarlo dos veces)
           notas: (f.notas||"")+" [Prensado desde "+(f.depId||"prensa")+"]",
         };
-        setOperaciones(prev=>[opLlenado,...prev]);
+        opLlenadoPrensado = opLlenado;
         // El orujo no se acumula aqui: se calcula siempre desde las operaciones de prensado
 
         // El vino sigue siendo el mismo lote: el destino hereda su identidad y seguimiento
@@ -2105,7 +2150,7 @@ export default function BodegaApp() {
         const {_editandoId, _heredadoDe, ...opSinId} = f;
         setOperaciones(prev=>prev.map(o=>o.id===_editandoId?{...opSinId,id:_editandoId,...(productoFinal||{}),...(dosisRealFinal||{})}:o));
       } else {
-        const ops = [{...f, id:Date.now(), 
+        const ops = [{...f, id:nuevoIdOp(),
           ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{}),
           ...(tipoVinoEntrada||{}),
           ...(tipoVinoVendimia||{}),
@@ -2113,9 +2158,17 @@ export default function BodegaApp() {
           ...(dosisRealFinal||{})
         }];
         if(f.tipo==="trasiego"&&f.depDestino2&&f.litros2) {
-          ops.push({...f, id:Date.now()+1, depDestino:f.depDestino2, litros:f.litros2, depDestino2:undefined, litros2:undefined,
+          // Un trasiego a dos destinos se guarda como DOS operaciones independientes.
+          // La primera se queda solo con el primer destino: si conservara depDestino2 y
+          // litros2, el origen restaria esos litros dos veces (una por cada operacion)
+          // y podria quedarse vacio.
+          ops[0] = {...ops[0], depDestino2:undefined, litros2:undefined};
+          ops.push({...f, id:nuevoIdOp(), depDestino:f.depDestino2, litros:f.litros2, depDestino2:undefined, litros2:undefined,
             ...(etiquetaOrigen?{tipoVinoOrigen:etiquetaOrigen.tipoVino, anadaOrigen:etiquetaOrigen.anada, etiquetaOrigen:etiquetaOrigen.etiqueta}:{})});
         }
+        // El llenado del destino de un prensado va en la MISMA actualizacion que el
+        // prensado, para que nunca pueda guardarse uno sin el otro.
+        if(opLlenadoPrensado) ops.push({...opLlenadoPrensado, id:nuevoIdOp()});
         setOperaciones(prev=>[...ops,...prev]);
       }
 
@@ -2809,6 +2862,23 @@ export default function BodegaApp() {
               </div>}
             </div>
           </div>
+
+          {/* Aviso de descuadre: mejor verlo que encontrarse un deposito vacio sin explicacion */}
+          {esHoy && (()=>{
+            const problemas = revisarDatos();
+            if(problemas.length===0) return null;
+            return (
+              <div style={{...S.card,marginBottom:10,borderColor:C.danger,background:"rgba(200,60,60,0.08)"}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.danger,marginBottom:6}}>⚠ Revisar datos ({problemas.length})</div>
+                {problemas.map((p,i)=>(
+                  <div key={i} style={{fontSize:12,color:C.text,marginBottom:4}}>· {p.texto}</div>
+                ))}
+                <div style={{fontSize:11,color:C.muted,marginTop:6,fontStyle:"italic"}}>
+                  Falta algun apunte de entrada. Anadelo desde Nueva operacion (Llenado) en el deposito afectado.
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Recordatorio diario: una linea plegable (el detalle se despliega al tocarla) */}
           {esHoy && hayFermentandoHoy() && (()=>{
