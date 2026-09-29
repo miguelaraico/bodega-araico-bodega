@@ -212,7 +212,9 @@ const protocoloTinto = (levadura1, levadura2) => [
   pStep("densidad", "Nutriferm Special (20%)", "0,04 g/kg (20% de 0,2 g/kg)", 1.015, 1.015),
   pStep("densidad", "Nutriferm Special (20%)", "0,04 g/kg (20% de 0,2 g/kg)", 1.000, 1.000),
   pStep("densidad", "Nutriferm Special (20%)", "0,04 g/kg (20% de 0,2 g/kg)", 0.997, 0.997),
-  pStep("densidad", "Tanino Tan V (25%, tras prensa)", "0,04 g/kg (25% de 0,16 g/kg)", 0.997, 0.997),
+  // Uva entera: al prensar el vino sigue fermentando y la densidad repunta, asi que este
+  // ultimo taninado no se guia por densidad sino por el propio prensado.
+  pStep("prensado", "Tanino Tan V (25%, tras prensa)", "0,04 g/kg (25% de 0,16 g/kg)"),
 ];
 const PROTOCOLOS_DEFAULT = {
   blanco: [
@@ -333,6 +335,7 @@ const curvaCinetica = (inicial, objetivo, dias) => {
 const normProducto = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().replace(/\s+/g," ");
 const textoMomento = step => step.momento==="densidad"
   ? "densidad "+(step.densidadMin===step.densidadMax?densView(step.densidadMin):densView(step.densidadMin)+"-"+densView(step.densidadMax))
+  : step.momento==="prensado" ? "tras el prensado"
   : "al inicio del lote";
 
 // Calcula la dosis equivalente (texto) a partir de una cantidad total añadida.
@@ -731,7 +734,7 @@ export default function BodegaApp() {
   const contextoEnologo = (dep) => {
     const id = dep.id;
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(id, fechaConsulta);
-    const kg = kgVendimiaDe(id, fechaConsulta);
+    const kg = kgLoteDe(id, fechaConsulta);
     const hist = histDep(id, fechaConsulta, true);
     const ferm = hist.filter(o=>o.tipo==="fermentacion"&&(o.densidad||o.temperatura))
                      .sort((a,b)=>a.fecha.localeCompare(b.fecha));
@@ -833,6 +836,31 @@ export default function BodegaApp() {
         else if(o.tipo==="trasiego" && (o.depDestino===id||o.depDestino2===id)) kg = 0;
       });
     return kg;
+  };
+
+  // Kg de uva del LOTE, no solo del deposito. Una vez prensado, el vino esta en otro
+  // deposito (o en el mismo, ya como liquido) y kgVendimiaDe devuelve 0; los kilos siguen
+  // siendo los de la vendimia de origen, que es la referencia de las dosis en g/kg.
+  const kgLoteDe = (id, hastaFecha) => {
+    const propio = kgVendimiaDe(id, hastaFecha);
+    if(propio>0) return propio;
+    return histDep(id, hastaFecha, true)
+      .filter(o=>o.tipo==="vendimia")
+      .reduce((s,o)=>s+parseFloat(o.kg||0),0);
+  };
+
+  // Fecha en que se prenso el lote que hay ahora en el deposito (null si todavia no se ha
+  // prensado). Sirve para los pasos del protocolo que van "tras el prensado": con uva entera
+  // el vino sigue fermentando despues de prensar y la densidad repunta, asi que esperar a una
+  // densidad concreta no vale como aviso.
+  const fechaPrensadoDe = (id, hastaFecha) => {
+    const hasta = hastaFecha || "9999-12-31";
+    const ent = entradaLoteDe(id, hasta);
+    if(ent && ent.tipo==="llenado" && (ent.prensadoDesde || /\[Prensado desde /.test(ent.notas||""))) return ent.fecha;
+    const p = operaciones
+      .filter(o=>o.tipo==="prensado" && o.depDestino===id && o.fecha<=hasta && (!ent || o.fecha>=ent.fecha))
+      .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id)[0];
+    return p ? p.fecha : null;
   };
 
   // Una entrada (vendimia/llenado/entrada_granel/trasiego) solo cuenta como INICIO de lote
@@ -961,7 +989,8 @@ export default function BodegaApp() {
     const proto = protocolos[dep.tipoVino||""] || [];
     if(proto.length===0) return vacio;
     const litros = dep.siempreLleno ? dep.capacidad : litrosActuales(dep.id, fecha);
-    const kg = kgVendimiaDe(dep.id, fecha);
+    const kg = kgLoteDe(dep.id, fecha);
+    const fPrensado = fechaPrensadoDe(dep.id, fecha);
     // Densidad actual = ultima lectura QUE TENGA densidad (aunque la ultima solo tuviera temperatura)
     const conDens = lote.filter(o=>o.tipo==="fermentacion"&&o.densidad!==undefined&&o.densidad!==null&&o.densidad!=="")
                         .sort((a,b)=>a.fecha.localeCompare(b.fecha)||(a.hora||"").localeCompare(b.hora||"")||a.id-b.id);
@@ -1005,7 +1034,8 @@ export default function BodegaApp() {
         } else return;
       }
       if(step.momento==="densidad" && !(densActual!=null && !isNaN(densActual) && densActual<=step.densidadMax)) return;
-      if(step.momento!=="inicio" && step.momento!=="densidad") return;
+      if(step.momento==="prensado" && !fPrensado) return;
+      if(!["inicio","densidad","prensado"].includes(step.momento)) return;
       const kgBase = porUvaNueva && ultimaVendimia ? parseFloat(ultimaVendimia.kg||0) : kg;
       const cantidad = calcularCantidad(step.dosis, porUvaNueva?0:litros, kgBase);
       pasos.push({step, porUvaNueva, cantidad});
@@ -1991,7 +2021,7 @@ export default function BodegaApp() {
                 {selOp.dosisTeorica&&<div style={S.row}><span style={{color:C.muted}}>Dosis teorica</span><span>{selOp.dosisTeorica}</span></div>}
                 {selOp.dosisReal&&<div style={S.row}><span style={{color:C.muted}}>Dosis real</span><span style={{fontWeight:700,color:C.accent}}>{selOp.dosisReal}</span></div>}
                 {!selOp.dosisTeorica&&!selOp.dosisReal&&selOp.dosis&&<div style={S.row}><span style={{color:C.muted}}>Dosis</span><span>{selOp.dosis}</span></div>}
-                {selOp.depId&&(()=>{const c=selOp.cantidadReal?{cantidad:parseFloat(selOp.cantidadReal),unidad:selOp.unidadReal||"g",estimado:false}:calcularCantidad(selOp.dosisReal||selOp.dosisTeorica||selOp.dosis, litrosActuales(selOp.depId,selOp.fecha), kgVendimiaDe(selOp.depId,selOp.fecha)); return c?<div style={S.row}><span style={{color:C.muted}}>Cantidad añadida</span><span style={{fontWeight:700,color:C.gold}}>{fmtCantidad(c)}</span></div>:null;})()}
+                {selOp.depId&&(()=>{const c=selOp.cantidadReal?{cantidad:parseFloat(selOp.cantidadReal),unidad:selOp.unidadReal||"g",estimado:false}:calcularCantidad(selOp.dosisReal||selOp.dosisTeorica||selOp.dosis, litrosActuales(selOp.depId,selOp.fecha), kgLoteDe(selOp.depId,selOp.fecha)); return c?<div style={S.row}><span style={{color:C.muted}}>Cantidad añadida</span><span style={{fontWeight:700,color:C.gold}}>{fmtCantidad(c)}</span></div>:null;})()}
                 {selOp.depDestino&&<div style={S.row}><span style={{color:C.muted}}>Destino</span><span>{selOp.depDestino}</span></div>}
                 {selOp.etiqueta&&<div style={S.row}><span style={{color:C.muted}}>Etiqueta</span><span>{selOp.etiqueta}</span></div>}
                 {selOp.botellas&&<div style={S.row}><span style={{color:C.muted}}>Unidades</span><span>{selOp.botellas}</span></div>}
@@ -2142,7 +2172,7 @@ export default function BodegaApp() {
 
       // Si se ha introducido la cantidad real añadida, calcular la dosis equivalente (g/hL, g/L o g/kg)
       const dosisRealCalculada = ((esTrat||esAditivo) && f.cantidadReal && f.depId)
-        ? dosisEquivalente(parseFloat(f.cantidadReal), f.unidadReal||"g", litrosActuales(f.depId,f.fecha), f.dosisTeorica, kgVendimiaDe(f.depId,f.fecha))
+        ? dosisEquivalente(parseFloat(f.cantidadReal), f.unidadReal||"g", litrosActuales(f.depId,f.fecha), f.dosisTeorica, kgLoteDe(f.depId,f.fecha))
         : null;
       const dosisRealFinal = dosisRealCalculada ? {dosisReal:dosisRealCalculada} : null;
 
@@ -2508,7 +2538,7 @@ export default function BodegaApp() {
               <div style={{flex:1}}>
                 <label style={S.label}>Dosis teorica</label>
                 <input type="text" style={S.input} placeholder="ej. 5 g/hL" value={f.dosisTeorica||""} onChange={e=>set("dosisTeorica",e.target.value)}/>
-                {f.depId&&f.dosisTeorica&&(()=>{const c=calcularCantidad(f.dosisTeorica, litrosActuales(f.depId,f.fecha||hoy()), kgVendimiaDe(f.depId,f.fecha||hoy())); return c?<div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {fmtCantidad(c)} sugerido</div>:null;})()}
+                {f.depId&&f.dosisTeorica&&(()=>{const c=calcularCantidad(f.dosisTeorica, litrosActuales(f.depId,f.fecha||hoy()), kgLoteDe(f.depId,f.fecha||hoy())); return c?<div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {fmtCantidad(c)} sugerido</div>:null;})()}
               </div>
             </div>
             <label style={{...S.label,marginTop:8}}>Cantidad real añadida</label>
@@ -2520,7 +2550,7 @@ export default function BodegaApp() {
                 <option value="ml">ml</option>
               </select>
             </div>
-            {f.depId&&f.cantidadReal&&(()=>{const eq=dosisEquivalente(parseFloat(f.cantidadReal),f.unidadReal||"g",litrosActuales(f.depId,f.fecha||hoy()),f.dosisTeorica,kgVendimiaDe(f.depId,f.fecha||hoy())); return eq?<div style={{fontSize:12,color:C.accent,marginTop:4}}>≈ {eq} de dosis real</div>:null;})()}
+            {f.depId&&f.cantidadReal&&(()=>{const eq=dosisEquivalente(parseFloat(f.cantidadReal),f.unidadReal||"g",litrosActuales(f.depId,f.fecha||hoy()),f.dosisTeorica,kgLoteDe(f.depId,f.fecha||hoy())); return eq?<div style={{fontSize:12,color:C.accent,marginTop:4}}>≈ {eq} de dosis real</div>:null;})()}
           </>}
 
           {/* Producto de fermentacion (levaduras, nutrientes, enzimas...) */}
@@ -2540,7 +2570,7 @@ export default function BodegaApp() {
               <div style={{flex:1}}>
                 <label style={S.label}>Dosis teorica</label>
                 <input type="text" style={S.input} placeholder="ej. 20 g/hL" value={f.dosisTeorica||""} onChange={e=>set("dosisTeorica",e.target.value)}/>
-                {f.depId&&f.dosisTeorica&&(()=>{const c=calcularCantidad(f.dosisTeorica, litrosActuales(f.depId,f.fecha||hoy()), kgVendimiaDe(f.depId,f.fecha||hoy())); return c?<div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {fmtCantidad(c)} sugerido</div>:null;})()}
+                {f.depId&&f.dosisTeorica&&(()=>{const c=calcularCantidad(f.dosisTeorica, litrosActuales(f.depId,f.fecha||hoy()), kgLoteDe(f.depId,f.fecha||hoy())); return c?<div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {fmtCantidad(c)} sugerido</div>:null;})()}
               </div>
             </div>
             <label style={{...S.label,marginTop:8}}>Cantidad real añadida</label>
@@ -2552,7 +2582,7 @@ export default function BodegaApp() {
                 <option value="ml">ml</option>
               </select>
             </div>
-            {f.depId&&f.cantidadReal&&(()=>{const eq=dosisEquivalente(parseFloat(f.cantidadReal),f.unidadReal||"g",litrosActuales(f.depId,f.fecha||hoy()),f.dosisTeorica,kgVendimiaDe(f.depId,f.fecha||hoy())); return eq?<div style={{fontSize:12,color:C.accent,marginTop:4}}>≈ {eq} de dosis real</div>:null;})()}
+            {f.depId&&f.cantidadReal&&(()=>{const eq=dosisEquivalente(parseFloat(f.cantidadReal),f.unidadReal||"g",litrosActuales(f.depId,f.fecha||hoy()),f.dosisTeorica,kgLoteDe(f.depId,f.fecha||hoy())); return eq?<div style={{fontSize:12,color:C.accent,marginTop:4}}>≈ {eq} de dosis real</div>:null;})()}
           </>}
 
           {/* Temperatura */}
@@ -3551,8 +3581,8 @@ export default function BodegaApp() {
           </div>
           <div style={S.card}>
             <label style={S.label}>Momento</label>
-            <div style={{display:"flex",gap:6,marginBottom:10}}>
-              {[["inicio","Al inicio del lote"],["densidad","Rango de densidad"]].map(([v,l])=>(
+            <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+              {[["inicio","Al inicio del lote"],["densidad","Rango de densidad"],["prensado","Tras el prensado"]].map(([v,l])=>(
                 <button key={v} onClick={()=>setNuevoPaso(p=>({...p,momento:v}))}
                   style={{padding:"5px 12px",borderRadius:20,cursor:"pointer",fontFamily:"Georgia,serif",fontSize:12,
                     border:"2px solid "+(nuevoPaso.momento===v?C.gold:C.border),
