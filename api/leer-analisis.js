@@ -22,7 +22,8 @@ Devuelve SOLO un JSON valido, sin texto alrededor ni markdown, con este formato 
       "so2Libre": number|null,
       "so2Total": number|null,
       "azucares": number|null,
-      "acidoMalico": number|null
+      "acidoMalico": number|null,
+      "acidoLactico": number|null
     }
   ]
 }
@@ -39,6 +40,7 @@ Reglas:
   "Grado alcoholico probable / Refractometrico" (mosto). Usa la que tenga valor en esa fila;
   si las dos lo tienen, usa el adquirido. Una fila de mosto lleva el probable.
 - "azucares": vale tanto "Azucares reductores" como "Azucares - Refractometria".
+- "acidoLactico": la columna "Ac. L-Lactico" (malolactica). Muchos boletines no la traen: entonces va null.
 - NO inventes ningun valor. Un parametro que no este en el boletin va como null.
 - Incluye TODAS las filas de muestra del boletin, en el orden en que aparecen.`;
 

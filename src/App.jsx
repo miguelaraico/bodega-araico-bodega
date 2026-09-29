@@ -38,6 +38,7 @@ const cargarBodega = async () => {
       productos:   map.productos   ? JSON.parse(map.productos)   : null,
       protocolos:  map.protocolos  ? JSON.parse(map.protocolos)  : null,
       orujosAjuste: map.orujos_ajuste ? parseFloat(map.orujos_ajuste) : 0,
+      informes:    map.informes    ? JSON.parse(map.informes)    : null,
       _error: false,
     };
   } catch(e){ console.error(e); return {depositos:null,barricas:null,operaciones:null,_error:true}; }
@@ -73,7 +74,7 @@ const MAPA_PRODUCTOS = {
 
 const LS_BACKUP_KEY = "bodega_araico_backup_local_v1";
 
-const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots) => {
+const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots,infs) => {
   try {
     await supaFetch("POST","bodega_datos",[
       {bodega_id:BODEGA_ID,clave:"depositos",   valor:JSON.stringify(dep)},
@@ -85,12 +86,13 @@ const guardarBodega = async (dep,bar,ops,cerv,mat,stk,prods,oruj,prots) => {
       {bodega_id:BODEGA_ID,clave:"productos",   valor:JSON.stringify(prods)},
       {bodega_id:BODEGA_ID,clave:"protocolos",  valor:JSON.stringify(prots)},
       {bodega_id:BODEGA_ID,clave:"orujos_ajuste", valor:String(oruj)},
+      {bodega_id:BODEGA_ID,clave:"informes",    valor:JSON.stringify(infs||{})},
     ]);
     // Red de seguridad: copia local en el navegador, independiente de Supabase
     try {
       localStorage.setItem(LS_BACKUP_KEY, JSON.stringify({
         depositos:dep, barricas:bar, operaciones:ops, cervezas:cerv, materiales:mat,
-        stock:stk, productos:prods, protocolos:prots, orujosAjuste:oruj,
+        stock:stk, productos:prods, protocolos:prots, orujosAjuste:oruj, informes:infs,
         _guardadoEl: new Date().toISOString(),
       }));
     } catch(e){ /* localStorage lleno o no disponible: no es critico */ }
@@ -351,6 +353,38 @@ const Btn = ({children,onClick,variant="primary",small=false,full=false,disabled
     padding:small?"5px 12px":"10px 18px",fontSize:small?12:14,width:full?"100%":"auto",opacity:disabled?0.6:1,...v[variant]}}>{children}</button>;
 };
 
+// Informe del enologo: balance de un lote o de la campaña
+const Informe = ({inf, titulo}) => {
+  if(!inf) return null;
+  const bloque = (etiqueta, items, color) => (!items||items.length===0) ? null : (
+    <div style={{marginTop:12}}>
+      <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{etiqueta}</div>
+      {items.map((x,i)=>{
+        const esTexto = typeof x === "string";
+        return (
+          <div key={i} style={{borderLeft:"3px solid "+color,paddingLeft:10,marginBottom:8}}>
+            <div style={{fontSize:12.5,fontWeight:esTexto?400:700,color:esTexto?C.text:color}}>{esTexto?x:x.titulo}</div>
+            {!esTexto&&x.detalle&&<div style={{fontSize:12,color:C.muted,marginTop:2,lineHeight:1.5}}>{x.detalle}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+  return (
+    <div style={{...S.card,borderColor:C.gold}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.gold}}>{titulo}</div>
+      {inf.fecha&&<div style={{fontSize:10,color:C.muted,marginBottom:8}}>Generado el {fmtF(inf.fecha)}</div>}
+      {inf.resumen&&<div style={{fontSize:12.5,color:C.text,lineHeight:1.6,marginTop:6}}>{inf.resumen}</div>}
+      {bloque("Lo que salio bien", inf.bien, C.accent)}
+      {bloque("Incidencias", inf.incidencias, C.danger)}
+      {bloque("Puntos de mejora", inf.mejoras, C.gold)}
+      <div style={{fontSize:10,color:C.muted,marginTop:12,fontStyle:"italic"}}>
+        Analisis automatico sobre los datos registrados — la decision final es tuya.
+      </div>
+    </div>
+  );
+};
+
 const TabBar = ({tab,setTab}) => (
   <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,
     background:C.card,borderTop:"1px solid "+C.border,display:"flex",zIndex:20}}>
@@ -491,6 +525,10 @@ export default function BodegaApp() {
   const [chatAbierto, setChatAbierto] = useState(false);
   const [verPendientes, setVerPendientes] = useState(false);
   const [ventas,       setVentas]       = useState([]);
+  const [verInformeCampana, setVerInformeCampana] = useState(false);
+  const [informeCargando, setInformeCargando] = useState(null);  // clave del informe que se esta generando
+  const [informeError,  setInformeError]  = useState(null);
+  const [informes,      setInformes]      = useState({});  // {campana:{...}, dep_D7:{...}} informes guardados del enologo
   const [orujosAjuste,  setOrujosAjuste]  = useState(0); // correccion manual, se suma a lo calculado desde las operaciones de prensado
   const [materiales,   setMateriales]   = useState({
     botellas: [
@@ -565,6 +603,7 @@ export default function BodegaApp() {
       if(r.productos)   setProductos(r.productos);
       if(r.protocolos)  setProtocolos(r.protocolos);
       if(r.orujosAjuste!=null) setOrujosAjuste(r.orujosAjuste);
+      if(r.informes)    setInformes(r.informes);
       setCargando(false);
     };
     intentarCargar(3);
@@ -577,10 +616,10 @@ export default function BodegaApp() {
     if(saveRef.current) clearTimeout(saveRef.current);
     setGuardando(true);
     saveRef.current = setTimeout(async()=>{
-      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujosAjuste,protocolos);
+      await guardarBodega(depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujosAjuste,protocolos,informes);
       setGuardando(false);
     },1200);
-  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujosAjuste,protocolos]);
+  },[depositos,barricas,operaciones,cervezas,materiales,stockInicial,productos,orujosAjuste,protocolos,informes]);
 
   // Orujo total = suma de los kg registrados en cada prensado + ajuste manual.
   // Derivarlo de las operaciones evita descuadres al borrar o editar un prensado.
@@ -712,7 +751,13 @@ export default function BodegaApp() {
     L.push(`Deposito ${id} (${dep.capacidad||"?"} L de capacidad)`);
     L.push(`Tipo de vino: ${dep.tipoVino||"sin asignar"}${dep.anada?" | Añada "+dep.anada:""}${dep.etiqueta?" | "+dep.etiqueta:""}`);
     L.push(litros>0 ? `Contenido: ${litros} L` : (kg>0 ? `Contenido: ${kg} kg de uva sin prensar` : "Contenido: vacio"));
-    if(dep.fermentacionTerminada) L.push("Estado: fermentacion marcada como TERMINADA (vino en reposo/crianza)");
+    if(enMalolactica(dep)) {
+      const ini = inicioMLFDe(dep, fechaConsulta);
+      L.push(`Estado: FERMENTACION MALOLACTICA en curso desde ${ini||"?"}. La alcoholica ya termino.`);
+      L.push("En esta fase la densidad y la temperatura ya no son el seguimiento: lo que importa es la acidez volatil, la acidez total, el pH y como el malico pasa a lactico.");
+    }
+    else if(dep.malolacticaTerminada) L.push("Estado: malolactica TERMINADA (vino en reposo/crianza)");
+    else if(dep.fermentacionTerminada) L.push("Estado: fermentacion marcada como TERMINADA (vino en reposo/crianza)");
     if(dep.curvaInicial||dep.curvaObjetivo||dep.curvaDias)
       L.push(`Curva teorica prevista: de ${densView(dep.curvaInicial)} a ${densView(dep.curvaObjetivo)} en ${dep.curvaDias} dias`);
     L.push(`Fecha de hoy: ${fechaConsulta}`);
@@ -731,14 +776,96 @@ export default function BodegaApp() {
 
     L.push("\nANALISIS DE LABORATORIO:");
     if(anls.length===0) L.push("  (ninguno registrado)");
-    anls.forEach(o=>L.push(`  ${o.fecha}: pH ${o.ph||"-"}, ac.tartarica ${o.acidez||"-"} g/L, ac.acetico ${o.acidezV||"-"} g/L, malico ${o.acidoMalico||"-"} g/L, alcohol ${o.alcohol||"-"}%, azucares ${o.azucares||"-"} g/L, SO2 libre ${o.so2libre||"-"} mg/L`));
+    anls.forEach(o=>L.push(`  ${o.fecha}: pH ${o.ph||"-"}, ac.tartarica ${o.acidez||"-"} g/L, ac.acetico ${o.acidezV||"-"} g/L, malico ${o.acidoMalico||"-"} g/L, lactico ${o.acidoLactico||"-"} g/L, alcohol ${o.alcohol||"-"}%, azucares ${o.azucares||"-"} g/L, SO2 libre ${o.so2libre||"-"} mg/L`));
 
+    // Hasta cuando llegan los datos: sin esto el enologo razona sobre lecturas viejas
+    // como si fueran de hoy y propone cosas que ya no tocan.
+    const ultimaFecha = [...ferm,...prods,...anls].map(o=>o.fecha).filter(Boolean).sort().pop();
+    if(ultimaFecha) {
+      const diasSin = Math.floor((new Date(fechaConsulta+"T00:00:00")-new Date(ultimaFecha+"T00:00:00"))/86400000);
+      L.push(`\nEl dato mas reciente de este deposito es del ${ultimaFecha} (hace ${diasSin} dias).`);
+    }
+
+    const fase = enMalolactica(dep) ? "malolactica"
+               : (dep.fermentacionTerminada ? "terminado" : "alcoholica");
     const contexto = L.join("\n");
     // Firma: cambia si cambian los datos relevantes o la fecha de consulta
     const firma = [id, fechaConsulta, ferm.length, prods.length, anls.length,
                    ferm.map(o=>o.fecha+o.densidad+o.temperatura).join("|"),
-                   litros, kg, dep.fermentacionTerminada?1:0].join("~");
-    return {contexto, firma};
+                   anls.map(o=>o.fecha+o.acidoMalico+o.acidoLactico+o.acidezV).join("|"),
+                   litros, kg, fase].join("~");
+    return {contexto, firma, fase};
+  };
+
+  // Contexto de toda la campaña: un resumen por deposito que haya elaborado este año.
+  // Va comprimido a proposito — el balance compara lotes, no repasa lectura por lectura.
+  const contextoCampana = () => {
+    const h = fechaConsulta;
+    const anoActual = String(new Date(h+"T00:00:00").getFullYear());
+    const L = [`Balance de la campaña ${anoActual} de Bodegas Araico. Fecha de hoy: ${h}.`];
+    let n = 0;
+    [...depositos,...barricas].forEach(raw=>{
+      if(!raw.activo && raw.activo!==undefined) return;
+      const d = depConLote(raw);
+      const hist = histDep(d.id, h, true);
+      const vend = hist.filter(o=>o.tipo==="vendimia");
+      const ferm = hist.filter(o=>o.tipo==="fermentacion"&&(o.densidad||o.temperatura))
+                       .sort((a,b)=>a.fecha.localeCompare(b.fecha));
+      if(vend.length===0 && ferm.length===0) return;           // no ha elaborado
+      if(d.anada && d.anada!==anoActual) return;               // de otra añada
+      n++;
+      const kg = vend.reduce((s,o)=>s+parseFloat(o.kg||0),0);
+      const litros = d.siempreLleno ? d.capacidad : litrosActuales(d.id, h);
+      const temps = ferm.map(o=>parseFloat(o.temperatura)).filter(v=>!isNaN(v));
+      const dens  = ferm.filter(o=>o.densidad!==undefined&&o.densidad!==null&&o.densidad!=="");
+      const prods = hist.filter(o=>["aditivo_fermentacion","sulfitado","acidez","clarificacion","azucar"].includes(o.tipo));
+      const proto = protocolos[d.tipoVino||""] || [];
+      const hechos = new Set(prods.map(o=>o.protocoloStepId).filter(Boolean));
+      const sinEchar = proto.filter(s=>!hechos.has(s.id) && !(d.protocoloOmitidos||[]).includes(s.id));
+      const anls = hist.filter(o=>o.tipo==="analisis").sort((a,b)=>a.fecha.localeCompare(b.fecha));
+      const ult = anls[anls.length-1];
+
+      L.push(`\n--- ${d.id} · ${d.tipoVino||"sin tipo"}${d.etiqueta?" ("+d.etiqueta+")":""}`);
+      if(kg>0) L.push(`  Vendimia: ${kg} kg en ${vend.length} entrada(s), del ${vend[0].fecha} al ${vend[vend.length-1].fecha}`);
+      if(litros>0) L.push(`  Contenido actual: ${litros} L`);
+      if(dens.length>0) {
+        const dur = Math.round((new Date(dens[dens.length-1].fecha+"T00:00:00")-new Date(dens[0].fecha+"T00:00:00"))/86400000);
+        L.push(`  Fermentacion: ${dens.length} lecturas, de ${dens[0].densidad} (${dens[0].fecha}) a ${dens[dens.length-1].densidad} (${dens[dens.length-1].fecha}), ${dur} dias`);
+        // Tramos en los que la densidad no bajo: es donde se ve si se atasco
+        const paradas = [];
+        for(let i=1;i<dens.length;i++){
+          const a=densOk(dens[i-1].densidad), b=densOk(dens[i].densidad);
+          if(!isNaN(a)&&!isNaN(b)&&b>=a-0.0005) paradas.push(dens[i].fecha);
+        }
+        if(paradas.length) L.push(`  Dias sin bajar la densidad: ${paradas.join(", ")}`);
+      }
+      if(temps.length) L.push(`  Temperaturas: min ${Math.min(...temps)}, max ${Math.max(...temps)}, media ${(temps.reduce((s,v)=>s+v,0)/temps.length).toFixed(1)}`);
+      if(d.curvaInicial||d.curvaObjetivo) L.push(`  Curva prevista: de ${densView(d.curvaInicial)} a ${densView(d.curvaObjetivo)} en ${d.curvaDias||"?"} dias`);
+      L.push(`  Productos registrados: ${prods.length}${prods.length?" ("+prods.map(o=>o.producto||o.tipo).join(", ")+")":""}`);
+      if(sinEchar.length) L.push(`  Pasos del protocolo sin registrar: ${sinEchar.map(x=>x.producto).join(", ")}`);
+      if(ult) L.push(`  Ultimo analisis (${ult.fecha}): pH ${ult.ph||"-"}, ac.total ${ult.acidez||"-"}, ac.volatil ${ult.acidezV||"-"}, malico ${ult.acidoMalico||"-"}, lactico ${ult.acidoLactico||"-"}, alcohol ${ult.alcohol||"-"}`);
+      L.push(`  Estado: ${enMalolactica(d)?"en malolactica":(d.malolacticaTerminada?"malolactica terminada":(d.fermentacionTerminada?"alcoholica terminada":"fermentacion en curso"))}`);
+    });
+    L.push(`\nTotal de depositos que han elaborado esta campaña: ${n}`);
+    L.push(`Orujo acumulado: ${orujos} kg`);
+    return L.join("\n");
+  };
+
+  // Pedir un informe: de un deposito (balance del lote) o de toda la campaña
+  const pedirInforme = async (clave, contexto, esCampana) => {
+    setInformeCargando(clave);
+    setInformeError(null);
+    try {
+      const r = await fetch("/api/enologo", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({contexto, modo: esCampana?"informe_campana":"informe"}),
+      });
+      const data = await r.json();
+      if(!r.ok) throw new Error(data.error||"No se ha podido generar el informe");
+      setInformes(prev=>({...prev,[clave]:{...data, fecha:hoy()}}));
+    } catch(e) {
+      setInformeError(String(e.message||e));
+    } finally { setInformeCargando(null); }
   };
 
   // Enviar una pregunta libre al enologo sobre este deposito
@@ -746,7 +873,7 @@ export default function BodegaApp() {
     const id = dep.id;
     const pregunta = (texto||"").trim();
     if(!pregunta||chatCargando) return;
-    const {contexto} = contextoEnologo(dep);
+    const {contexto, fase} = contextoEnologo(dep);
     const historial = chatEnologo[id]||[];
 
     setChatEnologo(p=>({...p,[id]:[...historial,{rol:"user",texto:pregunta}]}));
@@ -755,7 +882,7 @@ export default function BodegaApp() {
     try {
       const r = await fetch("/api/enologo", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({contexto, pregunta, historial}),
+        body: JSON.stringify({contexto, pregunta, historial, fase}),
       });
       const data = await r.json();
       if(!r.ok) throw new Error(data.error||"Error desconocido");
@@ -767,19 +894,19 @@ export default function BodegaApp() {
 
   const consultarEnologo = async (dep) => {
     const id = dep.id;
-    const {contexto, firma} = contextoEnologo(dep);
+    const {contexto, firma, fase} = contextoEnologo(dep);
 
-    setAvisosEnologo(p=>({...p,[id]:{cargando:true,avisos:null,error:null,hash:firma}}));
+    setAvisosEnologo(p=>({...p,[id]:{cargando:true,avisos:null,error:null,hash:firma,generadoEl:hoy()}}));
     try {
       const r = await fetch("/api/enologo", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({contexto}),
+        body: JSON.stringify({contexto, fase}),
       });
       const data = await r.json();
       if(!r.ok) throw new Error(data.error||"Error desconocido");
-      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:data.avisos||[],error:null,hash:firma}}));
+      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:data.avisos||[],error:null,hash:firma,generadoEl:hoy()}}));
     } catch(e) {
-      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:null,error:String(e.message||e),hash:firma}}));
+      setAvisosEnologo(p=>({...p,[id]:{cargando:false,avisos:null,error:String(e.message||e),hash:firma,generadoEl:hoy()}}));
     }
   };
 
@@ -894,6 +1021,47 @@ export default function BodegaApp() {
     };
   };
 
+  // ── Fermentacion malolactica ───────────────────────────────────────────────
+  // Terminada la alcoholica, los tintos hacen la malolactica. Ahi la densidad y la
+  // temperatura ya no dicen nada: lo que se sigue es la acidez volatil, la total, el pH
+  // y como el malico se va convirtiendo en lactico. Por eso el seguimiento cambia de
+  // lecturas diarias a un analisis periodico.
+  const TIPOS_CON_MLF = ["tinto","desgranado","hormigon"];
+  const DIAS_ANALISIS_MLF = 7;
+  const haceMLF = d => TIPOS_CON_MLF.includes(String(d?.tipoVino||"").toLowerCase());
+  const enMalolactica = d => !!d && !!d.fermentacionTerminada && !d.malolacticaTerminada && haceMLF(d);
+
+  // Dia en que arranco la malolactica: el que se guardo al cerrar la alcoholica o, para
+  // los depositos cerrados antes de que existiera esto, su ultima lectura de fermentacion.
+  const inicioMLFDe = (d, hasta) => {
+    if(d.fermentacionFin) return d.fermentacionFin;
+    const ferm = histDep(d.id, hasta, true).filter(o=>o.tipo==="fermentacion")
+      .sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    return ferm.length ? ferm[ferm.length-1].fecha : null;
+  };
+
+  // Analisis de malolactica que tocaria hacer ya (uno por semana desde el anterior).
+  const analisisMLFPendientes = (hastaFecha) => {
+    const h = hastaFecha || hoy();
+    const res = [];
+    [...depositos,...barricas].forEach(raw=>{
+      if(!raw.activo && raw.activo!==undefined) return;
+      const d = depConLote(raw);
+      if(!enMalolactica(d)) return;
+      if((d.siempreLleno ? d.capacidad : litrosActuales(d.id, h))<=0) return;
+      const ini = inicioMLFDe(d, h);
+      if(!ini) return;
+      const anls = histDep(d.id, h, true)
+        .filter(o=>o.tipo==="analisis" && o.fecha>=ini)
+        .sort((a,b)=>a.fecha.localeCompare(b.fecha));
+      const ultimo = anls.length ? anls[anls.length-1].fecha : null;
+      const desde = ultimo || ini;
+      const dias = Math.floor((new Date(h+"T00:00:00")-new Date(desde+"T00:00:00"))/86400000);
+      if(dias>=DIAS_ANALISIS_MLF) res.push({id:d.id, dias, ultimo, inicio:ini});
+    });
+    return res.sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true}));
+  };
+
   // Depositos en fermentacion activa a los que les falta la lectura de hoy (densidad y/o temperatura).
   // En fermentacion = tiene contenido, no esta marcado como terminado, y su lote viene de una
   // vendimia (propia o heredada por prensado) o ya tiene lecturas de fermentacion.
@@ -919,8 +1087,10 @@ export default function BodegaApp() {
   };
   const hayFermentandoHoy = () => [...depositos,...barricas].some(raw=>{
     const d = depConLote(raw);
-    if(d.fermentacionTerminada) return false;
     const h = hoy();
+    // La malolactica tambien es seguimiento: cambia lo que se mira, no que haya que mirarlo
+    if(enMalolactica(d) && (d.siempreLleno?d.capacidad:litrosActuales(d.id,h))>0) return true;
+    if(d.fermentacionTerminada) return false;
     if(litrosActuales(d.id,h)<=0 && kgVendimiaDe(d.id,h)<=0) return false;
     return histDep(d.id,h,true).some(o=>o.tipo==="vendimia"||o.tipo==="fermentacion");
   });
@@ -1090,6 +1260,7 @@ export default function BodegaApp() {
       if(r.productos)   setProductos(r.productos);
       if(r.protocolos)  setProtocolos(r.protocolos);
       if(r.orujosAjuste!=null) setOrujosAjuste(r.orujosAjuste);
+      if(r.informes)    setInformes(r.informes);
       setAvisoDatos(null);
       setCargando(false);
     };
@@ -1199,6 +1370,7 @@ export default function BodegaApp() {
         [/SO2\s*Libre/i,              "so2Libre"],
         [/SO2\s*Total/i,              "so2Total"],
         [/[AÁ]c\.?\s*L-?M[aá]lico/i,  "acidoMalico"],
+        [/[AÁ]c\.?\s*L-?L[aá]ctico/i, "acidoLactico"],
         [/Az[uú]cares/i,              "azucares"],
       ];
       marcadores.forEach(([re,campo])=>{
@@ -1259,6 +1431,7 @@ export default function BodegaApp() {
           acidezV:m.acidezVolatil?.toString()||"", so2libre:m.so2Libre?.toString()||"",
           so2total:m.so2Total?.toString()||"", azucares:m.azucares?.toString()||"",
           acidoMalico:m.acidoMalico?.toString()||"",
+          acidoLactico:m.acidoLactico?.toString()||"",
           nInforme:analisisPDF?.nPedido||"",
           notas:"Boletin "+(analisisPDF?.nPedido||"")+" - Muestra "+m.nMuestra,
         }));
@@ -1340,7 +1513,7 @@ export default function BodegaApp() {
                   <label style={S.label}>Parametros (editables)</label>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
                     {[["gradoAlcohol","Grado alc. %"],["acidezTotal","Ac. tartarica"],["pH","pH"],
-                      ["acidezVolatil","Ac. acetico"],["acidoMalico","Ac. L-Malico"],["azucares","Azucares"],
+                      ["acidezVolatil","Ac. acetico"],["acidoMalico","Ac. L-Malico"],["acidoLactico","Ac. L-Lactico"],["azucares","Azucares"],
                       ["so2Libre","SO2 libre"],["so2Total","SO2 total"]].map(([campo,label])=>(
                       <div key={campo}>
                         <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{label}</div>
@@ -1510,7 +1683,10 @@ export default function BodegaApp() {
             if(litrosDep<=0 && kgDep<=0) return null;   // deposito vacio: nada que revisar
             const est = avisosEnologo[dep.id];
             const nivelColor = {alto:C.danger, medio:C.gold, info:C.accent};
-            const hayAvisos = est?.avisos && est.avisos.length>0;
+            // Un aviso solo vale para los datos con los que se hizo: si despues has metido
+            // lecturas, productos o analisis (o simplemente es otro dia), ya no sirve.
+            const caducado = !!est && !est.cargando && est.hash !== contextoEnologo(dep).firma;
+            const hayAvisos = !caducado && est?.avisos && est.avisos.length>0;
             return (
               <div style={{...S.card,marginBottom:12,borderColor:hayAvisos?C.gold:"#3A4A5E"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1523,9 +1699,37 @@ export default function BodegaApp() {
                   </div>
                 </div>
 
-                {est?.error&&<div style={{fontSize:12,color:C.danger,marginTop:10}}>{est.error}</div>}
+                {/* Balance del lote: tiene sentido cuando la elaboracion ya ha terminado */}
+                {(()=>{
+                  const clave = "dep_"+dep.id+"_"+(dep.anada||"");
+                  const inf = informes[clave];
+                  const terminado = dep.malolacticaTerminada || (dep.fermentacionTerminada && !enMalolactica(dep));
+                  if(!terminado && !inf) return null;
+                  const cargando = informeCargando===clave;
+                  return (
+                    <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:12,color:C.muted}}>Balance del lote</span>
+                        <Btn variant={inf?"ghost":"gold"} small disabled={cargando}
+                          onClick={()=>pedirInforme(clave, contextoEnologo(dep).contexto, false)}>
+                          {cargando?"Escribiendo...":(inf?"Rehacer":"Generar informe")}
+                        </Btn>
+                      </div>
+                      {informeError&&cargando===false&&informeCargando===null&&inf===undefined&&
+                        <div style={{fontSize:12,color:C.danger,marginTop:8}}>{informeError}</div>}
+                      {inf&&<div style={{marginTop:10}}><Informe inf={inf} titulo={"Balance de "+dep.id}/></div>}
+                    </div>
+                  );
+                })()}
 
-                {est?.avisos&&est.avisos.length===0&&
+                {est?.error&&!caducado&&<div style={{fontSize:12,color:C.danger,marginTop:10}}>{est.error}</div>}
+
+                {caducado&&<div style={{fontSize:12,color:C.muted,marginTop:10,lineHeight:1.5}}>
+                  El analisis {est.generadoEl&&est.generadoEl!==hoy()?"es del "+fmtF(est.generadoEl):"se hizo con datos anteriores"} y
+                  desde entonces han cambiado los datos del deposito. Pulsa <b style={{color:C.text}}>Analizar</b> para uno al dia.
+                </div>}
+
+                {!caducado&&est?.avisos&&est.avisos.length===0&&
                   <div style={{fontSize:12,color:C.accent,marginTop:10}}>Sin incidencias: todo va segun lo previsto</div>}
 
                 {hayAvisos&&<div style={{marginTop:10}}>
@@ -1536,7 +1740,7 @@ export default function BodegaApp() {
                     </div>
                   ))}
                   <div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>
-                    Sugerencias automaticas — la decision final es tuya.
+                    Analisis del {fmtF(est.generadoEl||hoy())} · sugerencias automaticas, la decision final es tuya.
                   </div>
                 </div>}
 
@@ -1683,8 +1887,20 @@ export default function BodegaApp() {
             const diasDesdeInicio = fechaInicio ? (new Date(fechaConsulta+"T00:00:00")-new Date(fechaInicio+"T00:00:00"))/86400000 : Infinity;
             const loteReciente = diasDesdeInicio<=45 && !dep.fermentacionTerminada;
             const marcarTerminada = terminada => {
-              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,fermentacionTerminada:terminada}:b));
-              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,fermentacionTerminada:terminada}:d));
+              // Al cerrar la alcoholica se guarda el dia: es el arranque de la malolactica.
+              // Al reabrirla se deshace todo, tambien la malolactica.
+              const cambios = terminada
+                ? {fermentacionTerminada:true, fermentacionFin:hoy()}
+                : {fermentacionTerminada:false, fermentacionFin:undefined, malolacticaTerminada:false, malolacticaFin:undefined};
+              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,...cambios}:b));
+              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,...cambios}:d));
+            };
+            const marcarMLFTerminada = terminada => {
+              const cambios = terminada
+                ? {malolacticaTerminada:true, malolacticaFin:hoy()}
+                : {malolacticaTerminada:false, malolacticaFin:undefined};
+              if(isBarrica) setBarricas(prev=>prev.map(b=>b.id===dep.id?{...b,...cambios}:b));
+              else setDepositos(prev=>prev.map(d=>d.id===dep.id?{...d,...cambios}:d));
             };
             const currentDensidad = opsFermentacion.length>0 ? densOk(opsFermentacion[opsFermentacion.length-1].densidad) : cInicial;
             const protocoloActivo = loteReciente ? (protocolos[dep.tipoVino||""] || []) : [];
@@ -1715,9 +1931,98 @@ export default function BodegaApp() {
             };
 
             if(dep.fermentacionTerminada) {
+              // Tinto con la alcoholica cerrada: esta haciendo la malolactica. Se sigue con
+              // analisis, no con densidad y temperatura.
+              if(enMalolactica(dep)) {
+                const ini = inicioMLFDe(dep, fechaConsulta);
+                const anls = histDep(dep.id, fechaConsulta, true)
+                  .filter(o=>o.tipo==="analisis" && (!ini || o.fecha>=ini))
+                  .sort((a,b)=>a.fecha.localeCompare(b.fecha));
+                const ultimo = anls.length ? anls[anls.length-1] : null;
+                const desde = ultimo ? ultimo.fecha : ini;
+                const dias = desde ? Math.floor((new Date(fechaConsulta+"T00:00:00")-new Date(desde+"T00:00:00"))/86400000) : null;
+                const toca = dias!=null && dias>=DIAS_ANALISIS_MLF;
+                const val = (o,c) => (o&&o[c]!==undefined&&o[c]!==null&&o[c]!=="") ? parseFloat(o[c]) : null;
+                const mal = val(ultimo,"acidoMalico"), lac = val(ultimo,"acidoLactico"), vol = val(ultimo,"acidezV");
+                return (
+                  <>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div style={{...S.sec,marginBottom:0}}>Malolactica</div>
+                      <Btn variant="ghost" small onClick={()=>marcarMLFTerminada(true)}>Marcar como terminada</Btn>
+                    </div>
+                    <div style={{height:8}}/>
+                    <div style={{...S.card,borderColor:toca?C.gold:C.border}}>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
+                        Desde el {fmtF(ini)}{ultimo?" · ultimo analisis "+fmtF(ultimo.fecha)+" (hace "+dias+(dias===1?" dia":" dias")+")":" · sin analisis todavia"}
+                      </div>
+                      {ultimo&&<div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:10}}>
+                        {[["Malico",mal,"g/L"],["Lactico",lac,"g/L"],["Ac. volatil",vol,"g/L"],["Ac. total",val(ultimo,"acidez"),"g/L"],["pH",val(ultimo,"ph"),""]]
+                          .filter(([,v])=>v!=null).map(([et,v,u])=>(
+                          <div key={et} style={{minWidth:78}}>
+                            <div style={{fontSize:10,color:C.muted,textTransform:"uppercase"}}>{et}</div>
+                            <div style={{fontSize:15,fontWeight:700,color:et==="Malico"?C.gold:(et==="Ac. volatil"&&v>=0.6?C.danger:C.text)}}>{v}{u?" "+u:""}</div>
+                          </div>
+                        ))}
+                      </div>}
+                      {mal!=null&&mal<0.2&&<div style={{fontSize:12,color:C.accent,marginBottom:8}}>
+                        Malico por debajo de 0,2 g/L: la malolactica parece hecha. Si lo ves bien, marcala como terminada.
+                      </div>}
+                      {vol!=null&&vol>=0.6&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>
+                        Acidez volatil alta ({vol} g/L). Conviene vigilarla de cerca.
+                      </div>}
+                      {toca&&<div style={{fontSize:12,color:C.gold,marginBottom:8}}>
+                        ⚠ Toca analisis: han pasado {dias} dias desde {ultimo?"el anterior":"el fin de la alcoholica"}.
+                      </div>}
+                      {(()=>{
+                        // Como va la conversion: el malico baja y el lactico sube. La volatil
+                        // se vigila porque es lo que se tuerce si la malolactica se alarga.
+                        const datos = anls.map(o=>({
+                          fecha: fmtF(o.fecha),
+                          malico:   val(o,"acidoMalico"),
+                          lactico:  val(o,"acidoLactico"),
+                          volatil:  val(o,"acidezV"),
+                          total:    val(o,"acidez"),
+                          ph:       val(o,"ph"),
+                        }));
+                        const hay = c => datos.some(d=>d[c]!=null);
+                        if(datos.length<2 || !(hay("malico")||hay("lactico"))) return null;
+                        return (
+                          <div style={{height:200,marginBottom:10}}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={datos} margin={{top:5,right:5,left:-18,bottom:0}}>
+                                <CartesianGrid stroke={C.border} strokeDasharray="3 3"/>
+                                <XAxis dataKey="fecha" tick={{fill:C.muted,fontSize:10}}/>
+                                <YAxis yAxisId="gl" domain={["auto","auto"]} tick={{fill:C.muted,fontSize:10}} width={38}/>
+                                {hay("ph")&&<YAxis yAxisId="ph" orientation="right" domain={["auto","auto"]} tick={{fill:C.muted,fontSize:10}} width={32}/>}
+                                <Tooltip contentStyle={{background:"#0A1520",border:"1px solid "+C.border,fontSize:12}}/>
+                                <Legend wrapperStyle={{fontSize:11}}/>
+                                <ReferenceLine yAxisId="gl" y={0.2} stroke={C.accent} strokeDasharray="4 4"/>
+                                {hay("malico")&&<Line yAxisId="gl" dataKey="malico"  name="Malico g/L"    stroke={C.gold}   strokeWidth={2} dot={{r:3}} connectNulls isAnimationActive={false}/>}
+                                {hay("lactico")&&<Line yAxisId="gl" dataKey="lactico" name="Lactico g/L"   stroke={C.accent} strokeWidth={2} dot={{r:3}} connectNulls isAnimationActive={false}/>}
+                                {hay("volatil")&&<Line yAxisId="gl" dataKey="volatil" name="Ac. volatil g/L" stroke={C.danger} dot={{r:3}} connectNulls isAnimationActive={false}/>}
+                                {hay("total")&&<Line yAxisId="gl" dataKey="total"   name="Ac. total g/L"  stroke={C.muted}  strokeDasharray="4 4" dot={false} connectNulls isAnimationActive={false}/>}
+                                {hay("ph")&&<Line yAxisId="ph" dataKey="ph"      name="pH"            stroke={C.wine}   dot={{r:2}} connectNulls isAnimationActive={false}/>}
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        );
+                      })()}
+                      <Btn variant={toca?"gold":"ghost"} small full onClick={()=>{
+                        setFormOp({depId:dep.id, fecha:hoy(), tipo:"analisis"});
+                        setVista("nueva_op");
+                      }}>Anotar analisis</Btn>
+                    </div>
+                    <div onClick={()=>marcarTerminada(false)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                      <span style={{fontSize:12,color:C.muted}}>🏁 Alcoholica terminada el {fmtF(dep.fermentacionFin||ini)}</span>
+                      <span style={{fontSize:12,color:C.accent,fontWeight:700}}>Reabrir</span>
+                    </div>
+                  </>
+                );
+              }
               return (
-                <div onClick={()=>marcarTerminada(false)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-                  <span style={{fontSize:13,color:C.muted}}>🏁 Fermentacion terminada</span>
+                <div onClick={()=>{ if(dep.malolacticaTerminada) marcarMLFTerminada(false); else marcarTerminada(false); }}
+                  style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+                  <span style={{fontSize:13,color:C.muted}}>🏁 {dep.malolacticaTerminada?"Malolactica terminada"+(dep.malolacticaFin?" el "+fmtF(dep.malolacticaFin):""):"Fermentacion terminada"}</span>
                   <span style={{fontSize:12,color:C.accent,fontWeight:700}}>Reabrir</span>
                 </div>
               );
@@ -1898,6 +2203,7 @@ export default function BodegaApp() {
               ["acidez","Ac. total tartarica","g/L"],
               ["acidezV","Ac. acetico","g/L"],
               ["acidoMalico","Ac. L-Malico","g/L"],
+              ["acidoLactico","Ac. L-Lactico","g/L"],
               ["so2libre","SO2 libre","mg/L"],
               ["so2total","SO2 total","mg/L"],
               ["azucares","Azucares","g/L"],
@@ -2050,6 +2356,7 @@ export default function BodegaApp() {
                 {selOp.acidez&&<div style={S.row}><span style={{color:C.muted}}>Ac. total tartarica</span><span>{selOp.acidez} g/L</span></div>}
                 {selOp.acidezV&&<div style={S.row}><span style={{color:C.muted}}>Ac. acetico</span><span>{selOp.acidezV} g/L</span></div>}
                 {selOp.acidoMalico&&<div style={S.row}><span style={{color:C.muted}}>Ac. L-Malico</span><span>{selOp.acidoMalico} g/L</span></div>}
+                {selOp.acidoLactico&&<div style={S.row}><span style={{color:C.muted}}>Ac. L-Lactico</span><span>{selOp.acidoLactico} g/L</span></div>}
                 {selOp.so2libre&&<div style={S.row}><span style={{color:C.muted}}>SO2 libre</span><span>{selOp.so2libre} mg/L</span></div>}
                 {selOp.so2total&&<div style={S.row}><span style={{color:C.muted}}>SO2 total</span><span>{selOp.so2total} mg/L</span></div>}
                 {selOp.azucares&&<div style={S.row}><span style={{color:C.muted}}>Azucares</span><span>{selOp.azucares} g/L</span></div>}
@@ -2640,7 +2947,11 @@ export default function BodegaApp() {
             </div>
             <div style={{display:"flex",gap:8}}>
               <div style={{flex:1}}><label style={S.label}>Ac. L-Malico (g/l)</label><input type="number" step="0.1" style={S.input} placeholder="1.4" value={f.acidoMalico||""} onChange={e=>set("acidoMalico",e.target.value)}/></div>
+              <div style={{flex:1}}><label style={S.label}>Ac. L-Lactico (g/l)</label><input type="number" step="0.1" style={S.input} placeholder="0.8" value={f.acidoLactico||""} onChange={e=>set("acidoLactico",e.target.value)}/></div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
               <div style={{flex:1}}><label style={S.label}>Azucares (g/l)</label><input type="number" step="0.1" style={S.input} placeholder="207" value={f.azucares||""} onChange={e=>set("azucares",e.target.value)}/></div>
+              <div style={{flex:1}}></div>
             </div>
             <div style={{display:"flex",gap:8}}>
               <div style={{flex:1}}><label style={S.label}>SO2 libre (mg/l)</label><input type="number" style={S.input} placeholder="35" value={f.so2libre||""} onChange={e=>set("so2libre",e.target.value)}/></div>
@@ -2801,9 +3112,10 @@ export default function BodegaApp() {
     // Pendientes de hoy (lecturas y productos de protocolo), calculados una vez para la linea y los tanques
     const esHoy = fechaConsulta===hoy();
     const pendLect = esHoy ? lecturasPendientesHoy() : [];
+    const pendMLF  = esHoy ? analisisMLFPendientes() : [];
     const pendProd = esHoy ? [...depositos,...barricas].map(d=>({id:d.id, pp:protocoloPendienteDe(d, hoy())}))
         .filter(x=>x.pp.pasos.length>0).sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true})) : [];
-    const nPendDe = id => (pendLect.some(p=>p.id===id)?1:0) + (pendProd.find(x=>x.id===id)?.pp.pasos.length||0);
+    const nPendDe = id => (pendLect.some(p=>p.id===id)?1:0) + (pendProd.find(x=>x.id===id)?.pp.pasos.length||0) + (pendMLF.some(p=>p.id===id)?1:0);
     const nProdTotal = pendProd.reduce((s,x)=>s+x.pp.pasos.length,0);
     const esModoHistorico = fechaConsulta !== hoy();
     const totalL   = deps.reduce((s,d)=>s+(d.siempreLleno?d.capacidad:litrosActuales(d.id,fechaConsulta)),0);
@@ -2850,6 +3162,7 @@ export default function BodegaApp() {
                     if(d.productos)   setProductos(d.productos);
                     if(d.protocolos)  setProtocolos(d.protocolos);
                     if(d.orujosAjuste!=null) setOrujosAjuste(d.orujosAjuste);
+                    if(d.informes)    setInformes(d.informes);
                     window.alert("Copia de seguridad restaurada. Se ha guardado automaticamente.");
                   } catch(err) { window.alert("El archivo no es una copia de seguridad valida: "+err.message); }
                 };
@@ -2857,7 +3170,7 @@ export default function BodegaApp() {
               }}/>
             <Btn variant="ghost" small onClick={()=>fileInputRef.current.click()}>📥 Importar</Btn>
             <Btn variant="ghost" small onClick={()=>{
-                const backup = {depositos,barricas,operaciones,cervezas,materiales,stock:stockInicial,productos,protocolos,orujosAjuste,_exportadoEl:new Date().toLocaleString("es-ES")};
+                const backup = {depositos,barricas,operaciones,cervezas,materiales,stock:stockInicial,productos,protocolos,orujosAjuste,informes,_exportadoEl:new Date().toLocaleString("es-ES")};
                 const blob = new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -2930,6 +3243,38 @@ export default function BodegaApp() {
             </div>
           </div>
 
+          {/* Balance de la campaña: bajo demanda, cuando ya hay elaboracion que valorar */}
+          {(()=>{
+            const clave = "campana_"+new Date(fechaConsulta+"T00:00:00").getFullYear();
+            const inf = informes[clave];
+            const cargando = informeCargando===clave;
+            if(!verInformeCampana && !inf) return (
+              <div style={{margin:"0 0 10px 2px"}}>
+                <button onClick={()=>setVerInformeCampana(true)}
+                  style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",textDecoration:"underline",padding:0}}>
+                  Balance de la campaña
+                </button>
+              </div>
+            );
+            return (
+              <div style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:12,color:C.muted}}>Balance de la campaña</span>
+                  <div style={{display:"flex",gap:6}}>
+                    <Btn variant={inf?"ghost":"gold"} small disabled={cargando}
+                      onClick={()=>pedirInforme(clave, contextoCampana(), true)}>
+                      {cargando?"Escribiendo...":(inf?"Rehacer":"Generar")}
+                    </Btn>
+                    {!inf&&<Btn variant="ghost" small onClick={()=>setVerInformeCampana(false)}>Ocultar</Btn>}
+                  </div>
+                </div>
+                {informeError&&!inf&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>{informeError}</div>}
+                {cargando&&<div style={{fontSize:12,color:C.muted,marginBottom:8}}>Repasando todos los depositos, puede tardar un poco...</div>}
+                {inf&&<Informe inf={inf} titulo={"Campaña "+new Date(fechaConsulta+"T00:00:00").getFullYear()}/>}
+              </div>
+            );
+          })()}
+
           {/* Aviso de descuadre: mejor verlo que encontrarse un deposito vacio sin explicacion */}
           {esHoy && (()=>{
             const problemas = revisarDatos();
@@ -2951,11 +3296,13 @@ export default function BodegaApp() {
           {esHoy && hayFermentandoHoy() && (()=>{
             const pend = pendLect;
             const prods = pendProd;
-            if(pend.length===0 && prods.length===0) return (
+            const mlf   = pendMLF;
+            if(pend.length===0 && prods.length===0 && mlf.length===0) return (
               <div style={{fontSize:11,color:C.accent,margin:"0 0 8px 2px"}}>✓ Hoy todo al dia</div>
             );
             const resumen = [pend.length?pend.length+(pend.length===1?" lectura":" lecturas"):null,
-                             nProdTotal?nProdTotal+(nProdTotal===1?" producto":" productos"):null].filter(Boolean).join(" · ");
+                             nProdTotal?nProdTotal+(nProdTotal===1?" producto":" productos"):null,
+                             mlf.length?mlf.length+(mlf.length===1?" analisis MLF":" analisis MLF"):null].filter(Boolean).join(" · ");
             if(!verPendientes) return (
               <div onClick={()=>setVerPendientes(true)}
                 style={{...S.card,marginBottom:10,padding:"7px 12px",borderColor:C.gold,cursor:"pointer",
@@ -2981,6 +3328,26 @@ export default function BodegaApp() {
                         }}
                         style={{...boton,fontSize:12,padding:"5px 10px",border:"1px solid "+C.gold,color:C.text}}>
                         <b style={{color:C.gold}}>{p.id}</b> <span style={{color:C.muted,fontSize:11}}>· falta {p.falta}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>}
+                {mlf.length>0&&<>
+                  <div style={{fontSize:13,fontWeight:700,color:C.gold,margin:"12px 0 6px"}}>
+                    Analisis de malolactica pendientes ({mlf.length})
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:6}}>
+                    Acidez volatil, acidez total, pH y malico/lactico
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:prods.length?12:0}}>
+                    {mlf.map(p=>(
+                      <button key={p.id} onClick={()=>{
+                          setSelId(null);
+                          setFormOp({depId:p.id, fecha:hoy(), tipo:"analisis"});
+                          setVista("nueva_op");
+                        }}
+                        style={{...boton,fontSize:12,padding:"5px 10px",border:"1px solid "+C.gold,color:C.text}}>
+                        <b style={{color:C.gold}}>{p.id}</b> <span style={{color:C.muted,fontSize:11}}>· {p.ultimo?"hace "+p.dias+(p.dias===1?" dia":" dias"):"sin analisis"}</span>
                       </button>
                     ))}
                   </div>
@@ -3069,8 +3436,11 @@ export default function BodegaApp() {
                     {nPendDe(dep.id)}
                   </div>}
                   {(()=>{
-                    const av = avisosEnologo[dep.id]?.avisos;
-                    if(!av||av.length===0) return null;
+                    const e = avisosEnologo[dep.id];
+                    const av = e?.avisos;
+                    // Solo mientras el analisis siga siendo del dia: uno de hace una semana
+                    // habla de una fermentacion que ya no es esta.
+                    if(!av||av.length===0||(e.generadoEl&&e.generadoEl!==hoy())) return null;
                     const alto = av.some(a=>a.nivel==="alto");
                     return (
                       <div title={av.map(a=>a.titulo).join(" · ")}
