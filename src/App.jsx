@@ -648,10 +648,15 @@ export default function BodegaApp() {
   };
 
   // Calcula la etiqueta actual de un deposito desde sus operaciones
-  const etiquetaActual = (id) => {
+  // Con hastaFecha devuelve el vino que tenia el deposito EN ESA FECHA, no el de hoy.
+  // Hace falta al importar un boletin antiguo: los depositos han podido cambiar de contenido
+  // desde que se tomo la muestra.
+  const etiquetaActual = (id, hastaFecha) => {
+    const hasta = hastaFecha || "9999-12-31";
     const entradas = operaciones
       .filter(o=>o.depId===id&&["vendimia","llenado","entrada_granel"].includes(o.tipo))
       .concat(operaciones.filter(o=>(o.depDestino===id||o.depDestino2===id)&&o.tipo==="trasiego"))
+      .filter(o=>o.fecha<=hasta)
       .filter(o=>esInicioDeLote(o,id))
       .sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.id-a.id);
 
@@ -682,7 +687,10 @@ export default function BodegaApp() {
     const dep = depositos.find(d=>d.id===id);
     // Si ya no quedan litros reales, ignorar el tipoVino/anada/etiqueta guardados en el deposito:
     // pueden haber quedado obsoletos (p.ej. trasiegos o cargas hechas fuera del flujo normal de la app)
-    if(litrosActuales(id)<=0) return {tipoVino:"",anada:"",etiqueta:""};
+    // Vacio en esa fecha: ni litros ni uva sin prensar. Sin fecha se comporta como antes
+    // (solo litros), para no cambiar lo que ya se ve en la pantalla de depositos.
+    const vacio = litrosActuales(id, hastaFecha)<=0 && (hastaFecha ? kgVendimiaDe(id, hasta)<=0 : true);
+    if(vacio) return {tipoVino:"",anada:"",etiqueta:""};
     return {tipoVino:dep?.tipoVino||"", anada:dep?.anada||"", etiqueta:dep?.etiqueta||""};
   };
 
@@ -1349,21 +1357,45 @@ export default function BodegaApp() {
                   <input type="date" style={{...S.input,marginBottom:10}} value={m.fecha||""}
                     onChange={e=>setAnalisisPDF(prev=>({...prev,muestras:prev.muestras.map((x,j)=>j===i?{...x,fecha:e.target.value}:x)}))}/>
                   <label style={S.label}>Asignar a deposito / barrica</label>
-                  <select style={{...S.input,marginBottom:0,borderColor:m.depAsignado?C.accent:C.danger}}
-                    value={m.depAsignado}
-                    onChange={e=>setAnalisisPDF(prev=>({...prev,
-                      muestras:prev.muestras.map((x,j)=>j===i?{...x,depAsignado:e.target.value}:x)}))}>
-                    <option value="">-- Sin asignar --</option>
-                    <optgroup label="Depositos">
-                      {depositos.filter(d=>d.activo).map(d=><option key={d.id} value={d.id}>{d.nombre}{d.tipoVino?" - "+d.tipoVino+" "+d.anada:""}</option>)}
-                    </optgroup>
-                    <optgroup label="Barricas francesas">
-                      {barricas.filter(b=>b.tipo==="frances"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}</option>)}
-                    </optgroup>
-                    <optgroup label="Barricas americanas">
-                      {barricas.filter(b=>b.tipo==="americano"&&b.activo).map(b=><option key={b.id} value={b.id}>{b.nombre}</option>)}
-                    </optgroup>
-                  </select>
+                  {(()=>{
+                    // El boletin puede ser de hace dias: hay que ver los depositos como estaban
+                    // EN LA FECHA DE LA MUESTRA, no como estan hoy.
+                    const fMuestra = m.fecha || analisisPDF.fecha || hoy();
+                    const esPasado = fMuestra < hoy();
+                    const describir = (c) => {
+                      const et = etiquetaActual(c.id, fMuestra);
+                      const l  = c.siempreLleno ? c.capacidad : litrosActuales(c.id, fMuestra);
+                      const kg = kgVendimiaDe(c.id, fMuestra);
+                      const que = et.tipoVino ? et.tipoVino+(et.anada?" "+et.anada:"") : "";
+                      const cuanto = l>0 ? fmtL(l) : (kg>0 ? fmtK(kg)+" uva" : "");
+                      const detalle = [que, cuanto].filter(Boolean).join(" · ");
+                      return {texto: c.nombre+(detalle?" — "+detalle:" (vacio)"), lleno: l>0||kg>0};
+                    };
+                    // Los que tenian algo ese dia van primero: son los candidatos reales
+                    const opciones = (lista) => lista.map(c=>({c, ...describir(c)}))
+                      .sort((a,b)=>(b.lleno-a.lleno))
+                      .map(o=><option key={o.c.id} value={o.c.id}>{o.texto}</option>);
+                    return (<>
+                      {esPasado&&<div style={{fontSize:11,color:C.gold,marginBottom:4}}>
+                        Mostrando la bodega tal como estaba el {fmtF(fMuestra)}
+                      </div>}
+                      <select style={{...S.input,marginBottom:0,borderColor:m.depAsignado?C.accent:C.danger}}
+                        value={m.depAsignado}
+                        onChange={e=>setAnalisisPDF(prev=>({...prev,
+                          muestras:prev.muestras.map((x,j)=>j===i?{...x,depAsignado:e.target.value}:x)}))}>
+                        <option value="">-- Sin asignar --</option>
+                        <optgroup label="Depositos">
+                          {opciones(depositos.filter(d=>d.activo))}
+                        </optgroup>
+                        <optgroup label="Barricas francesas">
+                          {opciones(barricas.filter(b=>b.tipo==="frances"&&b.activo))}
+                        </optgroup>
+                        <optgroup label="Barricas americanas">
+                          {opciones(barricas.filter(b=>b.tipo==="americano"&&b.activo))}
+                        </optgroup>
+                      </select>
+                    </>);
+                  })()}
                   {!m.depAsignado&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>Sin deposito — no se importara</div>}
                 </>}
               </div>
