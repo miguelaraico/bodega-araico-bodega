@@ -1,51 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 
-// ── Claude API para leer PDFs ─────────────────────────────────────────────────
-const leerAnalisisPDF = async (base64, mediaType) => {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: mediaType, data: base64 } },
-          { type: "text", text: `Extrae los datos de analisis de este boletin de laboratorio enologico. 
-Devuelve SOLO un JSON valido con este formato exacto, sin texto adicional:
-{
-  "fecha": "YYYY-MM-DD",
-  "nPedido": "string",
-  "muestras": [
-    {
-      "nMuestra": "string",
-      "identificador": "string",
-      "producto": "string",
-      "gradoAlcohol": number or null,
-      "acidezTotal": number or null,
-      "pH": number or null,
-      "acidezVolatil": number or null,
-      "so2Libre": number or null,
-      "so2Total": number or null,
-      "azucares": number or null,
-      "acidoMalico": number or null
-    }
-  ]
-}` }
-        ]
-      }]
-    })
-  });
-  const data = await res.json();
-  const text = data.content?.find(b => b.type === "text")?.text || "";
-  const clean = text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
-};
+// La lectura de boletines PDF se hace en el servidor (api/leer-analisis.js),
+// donde vive la clave de la API. Nunca desde el navegador.
 
 const SUPA_URL = "https://vjwmtltknosrrhligoha.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZqd210bHRrbm9zcnJobGlnb2hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3MDQ4MTksImV4cCI6MjA5MjI4MDgxOX0.k7N_QH_p5C1OdGLzPTHRL5Ru2nGHDk4KhXLfTQIFJgE";
@@ -382,7 +339,7 @@ const S = {
   back:   {background:"none",border:"none",color:C.gold,fontSize:24,cursor:"pointer",padding:"0 8px 0 0",lineHeight:1},
 };
 
-const Btn = ({children,onClick,variant="primary",small=false,full=false}) => {
+const Btn = ({children,onClick,variant="primary",small=false,full=false,disabled=false}) => {
   const v = {
     primary:{background:C.accent,color:"#fff"},
     gold:   {background:C.gold,color:"#0F1923"},
@@ -390,8 +347,8 @@ const Btn = ({children,onClick,variant="primary",small=false,full=false}) => {
     danger: {background:C.danger,color:"#fff"},
     wine:   {background:C.wine,color:"#fff"},
   };
-  return <button onClick={onClick} style={{fontFamily:"Georgia,serif",cursor:"pointer",borderRadius:8,fontWeight:600,border:"none",
-    padding:small?"5px 12px":"10px 18px",fontSize:small?12:14,width:full?"100%":"auto",...v[variant]}}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} style={{fontFamily:"Georgia,serif",cursor:disabled?"default":"pointer",borderRadius:8,fontWeight:600,border:"none",
+    padding:small?"5px 12px":"10px 18px",fontSize:small?12:14,width:full?"100%":"auto",opacity:disabled?0.6:1,...v[variant]}}>{children}</button>;
 };
 
 const TabBar = ({tab,setTab}) => (
@@ -522,6 +479,7 @@ export default function BodegaApp() {
   const [fechaConsulta,setFechaConsulta]= useState(hoy());
   const [analisisPDF,  setAnalisisPDF]  = useState(null);  // muestras extraidas del PDF
   const [leyendoPDF,   setLeyendoPDF]   = useState(false);
+  const [errorPDF,     setErrorPDF]     = useState(null);   // fallo al leer el boletin subido
   const [cervezas,     setCervezas]     = useState({grape:0, negra:0});
   const [formCerveza,  setFormCerveza]  = useState(null);
   const [stockInicial, setStockInicial] = useState({almacen:[],botellero:[]});
@@ -1176,6 +1134,45 @@ export default function BodegaApp() {
   // ── VISTA IMPORTAR ANALISIS ────────────────────────────────────────────────
   if(vista==="importar_analisis") {
 
+    // Enlaza cada muestra con su deposito o barrica por la referencia que puso la bodega
+    const asignarDepositos = (muestras) => (muestras||[]).map(m=>{
+      const idLimpio = String(m.identificador||"").replace(/[-\s]/g,"").toUpperCase();
+      const depMatch = [...depositos,...barricas].find(d=>
+        d.id.replace(/[-\s]/g,"").toUpperCase()===idLimpio ||
+        d.nombre.replace(/[-\s]/g,"").toUpperCase()===idLimpio
+      );
+      return {...m, depAsignado: depMatch?.id||"", ignorar:false};
+    });
+
+    // Sube el boletin (PDF o foto) y lo lee en el servidor, donde esta la clave de la API
+    const subirBoletin = async (file) => {
+      if(!file) return;
+      // Vercel no admite peticiones de mas de 4,5 MB y el base64 engorda el archivo un 33%
+      if(file.size > 3*1024*1024) { setErrorPDF("El archivo pesa mas de 3 MB. Prueba con un PDF mas ligero o una foto de menos resolucion."); return; }
+      setErrorPDF(null); setLeyendoPDF(true);
+      try {
+        const base64 = await new Promise((ok,err)=>{
+          const fr = new FileReader();
+          fr.onload = () => ok(String(fr.result).split(",")[1]||"");
+          fr.onerror = () => err(new Error("No se ha podido leer el archivo"));
+          fr.readAsDataURL(file);
+        });
+        const r = await fetch("/api/leer-analisis", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({archivo:base64, mediaType:file.type||"application/pdf"}),
+        });
+        const data = await r.json();
+        if(!r.ok) throw new Error(data.error||"No se ha podido leer el boletin");
+        setAnalisisPDF({
+          fecha: data.fecha || hoy(),
+          nPedido: data.nPedido || "",
+          muestras: asignarDepositos((data.muestras||[]).map(m=>({...m, fecha: m.fecha || data.fecha || hoy()}))),
+        });
+      } catch(e) {
+        setErrorPDF(String(e.message||e));
+      } finally { setLeyendoPDF(false); }
+    };
+
     const parsearTexto = (texto) => {
       const fechaMatch = texto.match(/(\d{2})[\/-](\d{2})[\/-](\d{4})/);
       const fecha = fechaMatch ? `${fechaMatch[3]}-${fechaMatch[2]}-${fechaMatch[1]}` : hoy();
@@ -1240,14 +1237,7 @@ export default function BodegaApp() {
         campos.forEach((campo,i)=>{ m[campo] = valorDe(tokens[i]); });
         muestras.push(m);
       });
-      const muestrasConDep = muestras.map(m=>{
-        const idLimpio = (m.identificador||"").replace(/[-\s]/g,"").toUpperCase();
-        const depMatch = [...depositos,...barricas].find(d=>
-          d.id.replace(/[-\s]/g,"").toUpperCase()===idLimpio ||
-          d.nombre.replace(/[-\s]/g,"").toUpperCase()===idLimpio
-        );
-        return {...m, depAsignado: depMatch?.id||""};
-      });
+      const muestrasConDep = asignarDepositos(muestras);
       return {fecha, nPedido, muestras: muestrasConDep};
     };
 
@@ -1281,17 +1271,32 @@ export default function BodegaApp() {
           {!analisisPDF&&<>
             <div style={S.card}>
               <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
-                Abre el PDF en el ordenador, selecciona todo (<b style={{color:C.text}}>Ctrl+A</b>), copia (<b style={{color:C.text}}>Ctrl+C</b>) y pega aqui:
+                Sube el boletin del laboratorio y lo leo yo. Vale el PDF o una foto de la hoja.
               </div>
-              <textarea style={{...S.input,minHeight:180,resize:"vertical",fontSize:12}}
+              <input type="file" accept="application/pdf,image/*" ref={pdfRef} style={{display:"none"}}
+                onChange={e=>{ const f=e.target.files[0]; e.target.value=""; subirBoletin(f); }}/>
+              <Btn variant="gold" full onClick={()=>pdfRef.current?.click()} disabled={leyendoPDF}>
+                {leyendoPDF?"Leyendo el boletin...":"Subir PDF o foto"}
+              </Btn>
+              {leyendoPDF&&<div style={{fontSize:12,color:C.muted,marginTop:8,textAlign:"center"}}>Puede tardar unos segundos</div>}
+              {errorPDF&&<div style={{fontSize:12,color:C.danger,marginTop:10,lineHeight:1.5}}>
+                {errorPDF}
+                <div style={{color:C.muted,marginTop:4}}>Puedes pegar el texto del boletin aqui abajo como alternativa.</div>
+              </div>}
+            </div>
+            <div style={S.card}>
+              <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
+                O pega el texto: abre el PDF en el ordenador, selecciona todo (<b style={{color:C.text}}>Ctrl+A</b>), copia (<b style={{color:C.text}}>Ctrl+C</b>) y pegalo aqui:
+              </div>
+              <textarea style={{...S.input,minHeight:140,resize:"vertical",fontSize:12}}
                 placeholder="Pega aqui el texto del boletin..."
                 value={formOp.textoPDF||""}
                 onChange={e=>setFormOp(p=>({...p,textoPDF:e.target.value}))}/>
               <div style={{marginTop:8}}>
-                <Btn variant="gold" full onClick={()=>{
+                <Btn variant="ghost" full onClick={()=>{
                   if(!formOp.textoPDF?.trim()) return;
                   setAnalisisPDF(parsearTexto(formOp.textoPDF));
-                }}>Extraer datos</Btn>
+                }}>Extraer datos del texto</Btn>
               </div>
             </div>
             <div style={{...S.card,background:"rgba(200,169,110,0.08)",borderColor:C.gold,fontSize:12,color:C.muted}}>
