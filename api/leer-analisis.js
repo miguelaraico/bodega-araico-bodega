@@ -28,13 +28,19 @@ Devuelve SOLO un JSON valido, sin texto alrededor ni markdown, con este formato 
 }
 
 Reglas:
-- "identificador" es la referencia del deposito o barrica que puso la bodega (D1, D22, B7, 12...). Copiala tal cual.
-- "fecha": la de toma de muestra o, si no aparece, la del boletin.
-- Un valor por debajo del limite de cuantificacion ("<0,1", "<0,1 (L.C.)") se devuelve como 0.
-- Las comas decimales van como punto: 12,45 -> 12.45.
-- Ignora las incertidumbres (± 0,25) y las unidades.
-- Un parametro que no aparezca en el boletin va como null. NO inventes ningun valor.
-- Incluye TODAS las muestras del boletin, en el orden en que aparecen.`;
+- "identificador" es la referencia que puso la bodega, en la columna "Identif.": D7, D22, B1, IS, DES2... Copiala tal cual, sin interpretarla.
+- "fecha": la de toma de muestra; si no aparece, la de recepcion; si tampoco, la del boletin.
+- "nPedido": el NºPedido (no el NºInforme).
+- Un guion "-" o una celda vacia significan que ese parametro NO se ha analizado: van como null. No los conviertas en 0.
+- Un valor por debajo del limite de cuantificacion ("<0,1", "<5(L.C.)", "<0,1 (L.C.)") si va como 0: se ha medido y da practicamente cero.
+- Debajo de cada valor aparece su incertidumbre (± 0,25). Ignorala, no es un dato.
+- Las comas decimales van como punto: 12,45 -> 12.45. Quita las unidades.
+- "gradoAlcohol": el boletin puede traer dos columnas, "Grado alcoholico adquirido" (vino) y
+  "Grado alcoholico probable / Refractometrico" (mosto). Usa la que tenga valor en esa fila;
+  si las dos lo tienen, usa el adquirido. Una fila de mosto lleva el probable.
+- "azucares": vale tanto "Azucares reductores" como "Azucares - Refractometria".
+- NO inventes ningun valor. Un parametro que no este en el boletin va como null.
+- Incluye TODAS las filas de muestra del boletin, en el orden en que aparecen.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Metodo no permitido" });
